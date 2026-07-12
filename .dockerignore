@@ -1,0 +1,22 @@
+# Exclude everything except .git (needed for `git archive` in Python perf Dockerfiles).
+# This prevents COPY . /repo from baking Go binaries, test results, and node_modules
+# into image layers, which was inflating images from ~250 MB to ~450 MB.
+
+# Compiled Go output
+**/*.exe
+**/tmp/
+**/bin/
+
+# Test result artefacts
+tests/perf/k6/results/
+tests/perf/results/
+tests/perf/k6/report*.html
+
+# Go module download cache
+**/vendor/
+
+# Editor / OS noise
+.idea/
+.vscode/
+*.DS_Store
+Thumbs.db

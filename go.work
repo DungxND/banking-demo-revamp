@@ -1,0 +1,13 @@
+go 1.26.1
+
+use ./internal
+
+use ./producer
+
+use ./services/auth-service
+
+use ./services/account-service
+
+use ./services/transfer-service
+
+use ./services/notification-service

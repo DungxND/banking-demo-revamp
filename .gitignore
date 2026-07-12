@@ -1,0 +1,31 @@
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.env
+**/node_modules/
+
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+*.tfvars
+
+# Generated inventory
+infra/ansible/inventories/vps/hosts.ini
+infra/ansible/inventories/vps/group_vars/all.yml
+
+
+.playwright-mcp
+
+# Go build outputs
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+.commandcode/taste/taste.md
+/.commandcode

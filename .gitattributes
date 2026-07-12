@@ -1,0 +1,49 @@
+# Force LF line endings in the repository for all text files.
+# This prevents CRLF from breaking shell scripts and YAML when
+# edited on Windows (VS Code, Notepad++, etc.) before running in WSL/Linux.
+
+* text=auto eol=lf
+
+# Shell scripts — always LF, never executable bit mangled
+*.sh        text eol=lf
+*.bash      text eol=lf
+
+# Ansible / Kubernetes / Helm — always LF
+*.yml       text eol=lf
+*.yaml      text eol=lf
+
+# Go source
+*.go        text eol=lf
+
+# Terraform
+*.tf        text eol=lf
+*.tfvars    text eol=lf
+
+# Markdown and docs
+*.md        text eol=lf
+
+# JSON / JS / TS
+*.json      text eol=lf
+*.js        text eol=lf
+*.ts        text eol=lf
+*.tsx       text eol=lf
+*.jsx       text eol=lf
+*.css       text eol=lf
+*.html      text eol=lf
+
+# Docker
+Dockerfile*     text eol=lf
+*.dockerignore  text eol=lf
+
+# Binary files — never mangle
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.eot   binary
+*.pem   binary
+*.p12   binary

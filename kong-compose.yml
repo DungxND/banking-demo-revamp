@@ -1,0 +1,66 @@
+# Kong declarative config for docker-compose (Phase 8)
+# Routes: /api/* → api-producer:8080, /ws → notification-service:8004
+_format_version: "3.0"
+_transform: true
+
+services:
+  - name: api-producer
+    url: http://api-producer:8080
+    routes:
+      - name: api-route
+        paths:
+          - /api
+        strip_path: false
+    plugins:
+      - name: cors
+        config:
+          # Use "*" for EC2 with no fixed domain. Restrict once you have a stable URL.
+          origins:
+            - "*"
+          credentials: false
+          methods:
+            - GET
+            - POST
+            - PUT
+            - DELETE
+            - OPTIONS
+          headers:
+            - Accept
+            - Accept-Version
+            - Content-Length
+            - Content-MD5
+            - Content-Type
+            - Date
+            - X-Admin-Secret
+            - X-Session
+
+  - name: notification-service
+    url: http://notification-service:8004
+    routes:
+      - name: notification-ws-route
+        paths:
+          - /ws
+        strip_path: false
+        protocols:
+          - http
+          - https
+    plugins:
+      - name: cors
+        config:
+          origins:
+            - "*"
+          credentials: false
+          methods:
+            - GET
+            - POST
+            - PUT
+            - DELETE
+            - OPTIONS
+          headers:
+            - Accept
+            - Accept-Version
+            - Content-Length
+            - Content-MD5
+            - Content-Type
+            - Date
+            - X-Session
