@@ -1,0 +1,19 @@
+sql:
+  dialect: psql
+  driver: github.com/jackc/pgx/v5
+  # Glob relative to this config file — points at the checked-in migration SQL
+  pattern: "../../migrations/*up.sql"
+
+output: models
+
+plugins:
+  factory:
+    disabled: false
+  dberrors:
+    disabled: false
+  where:
+    disabled: false
+  loaders:
+    disabled: false
+  joins:
+    disabled: false
