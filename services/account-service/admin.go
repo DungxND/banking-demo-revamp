@@ -179,12 +179,12 @@ func userToAdminView(u db.User) map[string]any {
 // A typed struct is used instead of map[string]any to make the JSON contract
 // explicit and let the compiler catch field-name typos.
 type transferResponse struct {
-	ID           int32     `json:"id"`
-	FromUser     int32     `json:"from_user"`
-	ToUser       int32     `json:"to_user"`
+	ID           int64     `json:"id"`
+	FromUser     int64     `json:"from_user"`
+	ToUser       int64     `json:"to_user"`
 	FromUsername string    `json:"from_username"`
 	ToUsername   string    `json:"to_username"`
-	Amount       int32     `json:"amount"`
+	Amount       int64     `json:"amount"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 
@@ -206,7 +206,7 @@ func handleAdminTransfers(bdb bob.DB, logger *slog.Logger) internnats.Handler {
 
 		offset := (page - 1) * size
 		var transfers []db.Transfer
-		var userNames map[int32]string
+		var userNames map[int64]string
 
 		if offset < total {
 			// Fetch the page only when there are rows to return.
@@ -226,7 +226,7 @@ func handleAdminTransfers(bdb bob.DB, logger *slog.Logger) internnats.Handler {
 
 			// Collect user IDs from both sides of every transfer for a single
 			// batch username lookup. Deduplication is handled inside resolveUserNames.
-			ids := make([]int32, 0, len(transfers)*2)
+			ids := make([]int64, 0, len(transfers)*2)
 			for _, t := range transfers {
 				ids = append(ids, t.FromUser, t.ToUser)
 			}
@@ -264,15 +264,15 @@ func handleAdminTransfers(bdb bob.DB, logger *slog.Logger) internnats.Handler {
 // resolveUserNames resolves a slice of user IDs (possibly containing duplicates)
 // to a map of id → username using a single WHERE id = ANY($1) query.
 // Unknown IDs map to an empty string. Returns an empty map for an empty input.
-func resolveUserNames(ctx context.Context, bdb bob.DB, ids []int32) (map[int32]string, error) {
-	result := make(map[int32]string, len(ids))
+func resolveUserNames(ctx context.Context, bdb bob.DB, ids []int64) (map[int64]string, error) {
+	result := make(map[int64]string, len(ids))
 	if len(ids) == 0 {
 		return result, nil
 	}
 
 	// Deduplicate before sending to the database.
-	seen := make(map[int32]struct{}, len(ids))
-	unique := make([]int32, 0, len(ids))
+	seen := make(map[int64]struct{}, len(ids))
+	unique := make([]int64, 0, len(ids))
 	for _, id := range ids {
 		if _, ok := seen[id]; !ok {
 			seen[id] = struct{}{}
@@ -281,7 +281,7 @@ func resolveUserNames(ctx context.Context, bdb bob.DB, ids []int32) (map[int32]s
 	}
 
 	type idName struct {
-		ID       int32  `db:"id"`
+		ID       int64  `db:"id"`
 		Username string `db:"username"`
 	}
 	rows, err := bob.All(ctx, bdb,

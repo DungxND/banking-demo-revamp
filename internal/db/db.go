@@ -36,30 +36,30 @@ func pgErrCode(err error) string {
 }
 
 // User mirrors the users table.
-// Fields use int32 to match PostgreSQL INTEGER (4-byte) and bob stdlib scan.
+// Fields use int64 to match PostgreSQL BIGINT (migration 000003).
 type User struct {
-	ID            int32  `db:"id"`
+	ID            int64  `db:"id"`
 	Phone         string `db:"phone"`
 	AccountNumber string `db:"account_number"`
 	Username      string `db:"username"`
 	PasswordHash  string `db:"password_hash"`
-	Balance       int32  `db:"balance"`
+	Balance       int64  `db:"balance"`
 	IsAdmin       bool   `db:"is_admin"`
 }
 
 // Transfer mirrors the transfers table.
 type Transfer struct {
-	ID        int32     `db:"id"`
-	FromUser  int32     `db:"from_user"`
-	ToUser    int32     `db:"to_user"`
-	Amount    int32     `db:"amount"`
+	ID        int64     `db:"id"`
+	FromUser  int64     `db:"from_user"`
+	ToUser    int64     `db:"to_user"`
+	Amount    int64     `db:"amount"`
 	CreatedAt time.Time `db:"created_at"`
 }
 
 // Notification mirrors the notifications table.
 type Notification struct {
-	ID        int32     `db:"id"`
-	UserID    int32     `db:"user_id"`
+	ID        int64     `db:"id"`
+	UserID    int64     `db:"user_id"`
 	Message   string    `db:"message"`
 	IsRead    bool      `db:"is_read"`
 	CreatedAt time.Time `db:"created_at"`

@@ -217,7 +217,7 @@ func SetPresence(ctx context.Context, c *goredis.Client, userID int, online bool
 // Using a struct prevents format drift between the publisher (transfer-service)
 // and the subscriber (notification-service ws.go).
 type NotifyEvent struct {
-	TransferID int32 `json:"transfer_id"`
+	TransferID int64 `json:"transfer_id"`
 	Amount     int   `json:"amount"`
 }
 
@@ -225,7 +225,7 @@ type NotifyEvent struct {
 // pipeline. It carries post-TX balances so the balance read model can be
 // updated in the same Redis round-trip as the cache invalidation.
 type TransferCompleted struct {
-	TransferID      int32 `json:"transfer_id"`
+	TransferID      int64 `json:"transfer_id"`
 	Amount          int   `json:"amount"`
 	SenderID        int   `json:"sender_id"`
 	SenderBalance   int   `json:"sender_balance"`   // post-TX

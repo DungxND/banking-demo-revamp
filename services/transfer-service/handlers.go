@@ -40,7 +40,7 @@ type transferPayload struct {
 // senderBalance/receiverBalance are the post-TX values used to update
 // the balance read model (Tier 2).
 type transferResult struct {
-	transferID      int32
+	transferID      int64
 	senderID        int
 	receiverID      int
 	senderPhone     string
@@ -167,7 +167,7 @@ func runTransferTx(ctx context.Context, bdb bob.DB, senderID int, p transferPayl
 		if err != nil {
 			return err // sentinel or wrapped DB error
 		}
-		if int(receiverID) == senderID {
+		if int64(senderID) == receiverID {
 			return errSelfTransfer
 		}
 		res.receiverID = int(receiverID)
@@ -213,7 +213,7 @@ func runTransferTx(ctx context.Context, bdb bob.DB, senderID int, p transferPayl
 // Only the id column is fetched — the full row is re-read under FOR UPDATE lock by
 // lockBothUsers immediately after, so fetching all columns here is wasted bandwidth.
 // Returns errReceiverNotFound when no row matches.
-func resolveReceiver(ctx context.Context, tx bob.Transaction, p transferPayload) (int32, error) {
+func resolveReceiver(ctx context.Context, tx bob.Transaction, p transferPayload) (int64, error) {
 	col, val := db.UserIdentifierCol(p.AccountNumber, p.Phone, p.Username)
 
 	id, err := bob.One(ctx, tx,
@@ -222,7 +222,7 @@ func resolveReceiver(ctx context.Context, tx bob.Transaction, p transferPayload)
 			sm.From("users"),
 			sm.Where(col.EQ(psql.Arg(val))),
 		),
-		scan.SingleColumnMapper[int32],
+		scan.SingleColumnMapper[int64],
 	)
 	if db.IsNotFound(err) {
 		return 0, errReceiverNotFound
@@ -256,7 +256,7 @@ func lockBothUsers(ctx context.Context, tx bob.Transaction, senderID, receiverID
 	}
 
 	// rows[0] has the lower id, rows[1] the higher — map back to sender/receiver.
-	if int(rows[0].ID) == senderID {
+	if rows[0].ID == int64(senderID) {
 		return rows[0], rows[1], nil
 	}
 	return rows[1], rows[0], nil
@@ -273,7 +273,7 @@ func lockBothUsers(ctx context.Context, tx bob.Transaction, senderID, receiverID
 // Returns the sender's post-update balance and receiver's post-update balance via
 // the RETURNING clause so the caller can populate the post-commit pipeline without
 // extra queries.
-func updateBalances(ctx context.Context, tx bob.Transaction, senderID, receiverID int32, amount int) error {
+func updateBalances(ctx context.Context, tx bob.Transaction, senderID, receiverID int64, amount int) error {
 	// Single UPDATE with a CASE WHEN per row. ORDER BY is not needed — Postgres
 	// holds both rows locked (acquired in lockBothUsers) so no new deadlock risk.
 	res, err := bob.Exec(ctx, tx,
@@ -301,14 +301,14 @@ func updateBalances(ctx context.Context, tx bob.Transaction, senderID, receiverI
 }
 
 // insertTransferRecord persists the transfer row and returns the generated ID.
-func insertTransferRecord(ctx context.Context, tx bob.Transaction, senderID, receiverID int32, amount int) (int32, error) {
+func insertTransferRecord(ctx context.Context, tx bob.Transaction, senderID, receiverID int64, amount int) (int64, error) {
 	id, err := bob.One(ctx, tx,
 		psql.Insert(
 			im.Into("transfers", "from_user", "to_user", "amount"),
 			im.Values(psql.Arg(senderID), psql.Arg(receiverID), psql.Arg(amount)),
 			im.Returning("id"),
 		),
-		scan.SingleColumnMapper[int32],
+		scan.SingleColumnMapper[int64],
 	)
 	if err != nil {
 		return 0, fmt.Errorf("insert transfer: %w", err)
