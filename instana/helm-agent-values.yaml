@@ -1,30 +1,35 @@
 # instana/helm-agent-values.yaml
 #
-# Helm values for the Instana DaemonSet agent — banking-demo golang branch.
+# Helm values for the Instana DaemonSet agent — banking-demo.
 #
 # Sensor configuration is managed via Git-based configuration management.
 # The agent DaemonSet pulls instana/configuration.yaml directly from this
 # repository on every startup, so a helm upgrade is NOT required when only
 # sensor config changes (e.g. passwords, hosts, poll rates).
 #
-# Git credentials are passed at install time via --set (never committed):
+# Secrets and Git config are passed at install time via --set (never committed).
+# The Ansible playbook (install-instana.yml) handles all --set flags.
+# Manual helm invocation:
 #
-#   helm upgrade --install instana-agent \
+#   helm upgrade --install instana-agent instana-agent \
 #     --repo https://agents.instana.io/helm \
 #     --namespace instana-agent --create-namespace \
 #     -f instana/helm-agent-values.yaml \
 #     --set agent.key="${INSTANA_AGENT_KEY}" \
 #     --set agent.downloadKey="${INSTANA_DOWNLOAD_KEY}" \
 #     --set agent.endpointHost="${INSTANA_ENDPOINT_HOST}" \
-#     --set agent.env.INSTANA_GIT_REMOTE_USERNAME="${GITHUB_TOKEN}" \
+#     --set agent.env.INSTANA_GIT_REMOTE_REPOSITORY="https://github.com/dungxnd/banking-demo.git" \
+#     --set agent.env.INSTANA_GIT_REMOTE_BRANCH="main" \
+#     --set "agent.env.INSTANA_GIT_REMOTE_USERNAME=${GITHUB_PAT}" \
 #     instana-agent
+#   NOTE: do NOT pass INSTANA_GIT_REMOTE_PASSWORD — CRD rejects null env strings.
 #
 # Via Ansible (recommended):
 #   ./deploy.sh -p install-instana.yml \
 #     -e agent_key="$INSTANA_AGENT_KEY" \
 #     -e agent_download_key="$INSTANA_DOWNLOAD_KEY" \
 #     -e endpoint_host="$INSTANA_ENDPOINT_HOST" \
-#     -e git_token="$GITHUB_TOKEN"
+#     -e git_token="$GITHUB_PAT"
 #
 # Config reload without helm upgrade (after a config-only git push):
 #   Use the GitHub Actions workflow at .github/workflows/instana-gitops.yml
@@ -34,31 +39,31 @@
 # See instana/docs/13-k8s-agent-install.md for full reference.
 
 agent:
-  # agent.key, agent.downloadKey, and agent.endpointHost must be supplied at
-  # install time via --set — never committed to git.
+  # agent.key, agent.downloadKey, agent.endpointHost, and all
+  # INSTANA_GIT_REMOTE_* env vars must be supplied at install time via --set.
+  # They are never committed here.  See install-instana.yml for the full
+  # --set flag list and usage instructions.
   endpointPort: 443
 
   # ── Git-based configuration management ──────────────────────────────────
-  # The agent pulls instana/configuration.yaml from this repo on every
-  # startup and on every reload triggered via the Instana Web API.
+  # Three env vars are passed at install time via --set:
   #
-  # INSTANA_GIT_REMOTE_REPOSITORY and INSTANA_GIT_REMOTE_BRANCH are static
-  # and safe to commit. INSTANA_GIT_REMOTE_USERNAME (GitHub PAT with repo:read
-  # scope) must be passed at install time via --set agent.env.INSTANA_GIT_REMOTE_USERNAME.
-  # INSTANA_GIT_REMOTE_PASSWORD is intentionally empty — GitHub expects the
-  # PAT as the username with an empty password for basic authentication.
+  #   INSTANA_GIT_REMOTE_REPOSITORY  — repo HTTPS URL (no embedded credentials)
+  #   INSTANA_GIT_REMOTE_BRANCH      — branch to track (main)
+  #   INSTANA_GIT_REMOTE_USERNAME    — GitHub Fine-grained PAT (Contents: read)
   #
-  # Required repo structure (already in place):
-  #   instana/
-  #   └── configuration.yaml   ← pulled to instanaAgentDir/etc/instana/
-  env:
-    INSTANA_GIT_REMOTE_REPOSITORY: "https://github.com/DungxND/banking-demo.git"
-    INSTANA_GIT_REMOTE_BRANCH: "golang"
-    # INSTANA_GIT_REMOTE_USERNAME: supplied via --set at install time (GitHub PAT)
-    INSTANA_GIT_REMOTE_PASSWORD: ""
+  # INSTANA_GIT_REMOTE_PASSWORD must NOT be passed — the InstanaAgent CRD
+  # rejects null env values, and both --set key= and --set-string key= produce
+  # null when the value is empty. GitHub only needs the PAT as the username.
+  #
+  # The agent clones the repo into instanaAgentDir/etc/.git and maps:
+  #   instana/configuration.yaml  →  instanaAgentDir/etc/instana/configuration.yaml
+  #
+  # Hot-reload: push to main → instana-gitops.yml workflow triggers Web API reload.
+  # No helm upgrade needed for configuration-only changes.
 
 cluster:
-  name: banking-demo-k3s
+  name: banking-dung
 
 zone:
   name: banking-dung-ec2

@@ -37,8 +37,9 @@ connects in parallel to the agent on port **42699** using Instana's native proto
 | [`internal/db/db.go`](../../internal/db/db.go) | `instapgx.WrapClient` — PostgreSQL native spans |
 | [`internal/redis/redis.go`](../../internal/redis/redis.go) | `instaredis.WrapClient` — Redis native spans |
 
-Every service calls `tracing.Init(serviceName, otlpEndpoint, logger)` from its `main.go`. No
-per-service changes were needed — all instrumentation lives in the shared `internal` module.
+Every service calls `tracing.Init(serviceName, otlpEndpoint, logger)` from its `main.go`. All
+shared instrumentation lives in the `internal` module. `api-producer` additionally wraps its
+HTTP handler with `instana.TracingHandlerFunc` — see below.
 
 ```go
 // internal/tracing/tracing.go
@@ -80,15 +81,61 @@ if c := tracing.Collector(); c != nil {
 }
 ```
 
+### api-producer — HTTP handler wrapping for Go technology detection
+
+The go-sensor classifies a process as technology **Go** in the Instana UI by emitting native
+`g.http` entry spans. Without wrapping the HTTP handler, `InitCollector` still connects on
+port `42699` for process metrics, but Instana sees only OTel `SpanKindServer` HTTP spans and
+classifies the service as generic **HTTP** instead of **Go**.
+
+`api-producer` wraps its handler stack with `instana.TracingHandlerFunc` at the outermost layer:
+
+```go
+// producer/main.go
+import instana "github.com/instana/go-sensor"
+import "banking-demo/internal/tracing"
+
+// tracing.Collector() returns instana.TracerLogger from InitCollector() — the type
+// TracingHandlerFunc expects. The IBM docs show NewSensor() (legacy API); InitCollector
+// is the current equivalent and satisfies the same TracerLogger interface.
+instanaHandler := instana.TracingHandlerFunc(
+    tracing.Collector(),   // instana.TracerLogger, initialised by tracing.Init() above
+    "/",
+    otelhttp.NewHandler(router, serviceName).ServeHTTP,
+)
+server := &http.Server{Handler: instanaHandler, ...}
+```
+
+Execution order per request: **instana wrapper → otelhttp → chi router**
+
+1. `instana.TracingHandlerFunc` fires: starts a `g.http` span via the native Instana
+   OpenTracing tracer → sent to agent `:42699`. This span extracts `traceparent` from the
+   inbound request (from Kong), encodes it into Instana's native trace/span ID format, and
+   re-injects a matching `traceparent` into the response headers — so the Instana native span
+   and the downstream OTel spans share the same W3C trace ID.
+2. `otelhttp.NewHandler` fires: emits an OTel `SpanKindServer` HTTP span → agent `:4317`,
+   continues the same trace context downstream into NATS RPC calls.
+3. The `g.http` span on port `:42699` is what Instana uses to classify the service as
+   technology **Go**. OTel HTTP spans alone (`SpanKindServer`) do not trigger Go detection.
+
+The four NATS consumer services do **not** need this wrapper because their primary entry signals
+are `messaging.system=nats` spans + the go-sensor process registration, which is sufficient for
+Go technology detection even without native HTTP entry spans.
+
+---
+
 ### Module dependencies
 
 ```
 internal/go.mod
-  └─ github.com/instana/go-sensor v1.73.4
+  └─ github.com/instana/go-sensor v1.73.4          (direct)
        ├─ github.com/looplab/fsm v1.0.3
        └─ github.com/opentracing/opentracing-go v1.2.0
   └─ github.com/instana/go-sensor/instrumentation/instapgx/v2 v2.31.0
   └─ github.com/instana/go-sensor/instrumentation/instaredis/v2 v2.51.0
+
+producer/go.mod
+  └─ github.com/instana/go-sensor v1.73.4          (direct — needed for TracingHandlerFunc)
 ```
 
 ### Kubernetes env vars — Helm chart
@@ -190,6 +237,7 @@ kubectl -n banking exec deploy/auth-service -- \
 | "connection refused :42699" | Agent not running or pod on different node | `kubectl -n instana-agent get pods -o wide` — confirm DaemonSet pod on same node |
 | Go dashboard shows 0 goroutines | Agent sees the process but collector handshake is slow | Wait 30–60 s after pod start; enable `INSTANA_DEBUG=true` in `extraEnv` |
 | No PostgreSQL/Redis spans | `tracing.Init()` not called before `db.NewPool()` / `redis.NewClient()` | Ensure `tracing.Init()` is the first call in `main()` |
+| `api-producer` shows as technology **HTTP** not **Go** | `instana.TracingHandlerFunc` missing — no native `g.http` spans emitted | Fixed in commit `0e81f0f`; `api-producer` now shows technology **Go** (service type remains **HTTP** — that is correct and expected) |
 | `fsm` compile error | Old `looplab/fsm` < v1 in workspace | `go get github.com/looplab/fsm@v1` in the affected module |
 
 ---

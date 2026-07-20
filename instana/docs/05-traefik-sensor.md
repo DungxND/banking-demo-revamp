@@ -3,27 +3,41 @@
 > **Source:** https://www.ibm.com/docs/en/instana-observability/current?topic=technologies-monitoring-traefik
 > **Traefik v3 tracing ref:** https://doc.traefik.io/traefik/v3.7/reference/install-configuration/observability/tracing/
 > **Migration guide:** https://doc.traefik.io/traefik/v3.7/migrate/v2-to-v3-details/#tracing
-> Condensed for: k3s built-in Traefik v3, patched via `HelmChartConfig` (banking-demo golang branch)
+> Condensed for: banking-demo golang branch — Traefik is **disabled**; Kong handles ingress.
 
-> **⚠️ Traefik v3 breaking change:** `--tracing.instana` and `INSTANA_AGENT_ENDPOINT` were **removed in Traefik v3**. All vendor-specific tracing backends (Instana, Jaeger, Zipkin, Datadog, Elastic) were removed. Tracing is now exclusively via OTLP. The `HelmChartConfig` uses `tracing.otlp.grpc` Helm values pointed at the Instana agent's OTLP port (4317).
+> **⚠️ Traefik is NOT running in this cluster.** k3s is installed with `--disable traefik`
+> (see `roles/k3s/tasks/main.yml`). The Traefik sensor block in `configuration.yaml` is
+> commented out. This document is retained for reference in case Traefik is re-enabled.
 
 ---
 
-## How It Works
+## Current State
 
-The Instana Traefik sensor is **automatically deployed** after the host agent is installed. It collects:
+Traefik is disabled. All external ingress is handled by **Kong** via hostPort 80/443 on the
+k3s node. If you need to re-enable Traefik, follow the configuration steps below and
+uncomment the sensor block in `configuration.yaml`.
+
+---
+
+## How It Would Work (if re-enabled)
+
+The Instana Traefik sensor would be **automatically deployed** after the agent starts. It collects:
 - **Metrics** via Traefik's Prometheus endpoint (scraped by the agent every 1 s)
-- **Distributed traces** via OTLP/gRPC → Instana agent :4317 (Traefik v3)
+- **Distributed traces** via OTLP/gRPC → Instana agent `:4317` (Traefik v3)
 
 ```
 User request
   └─ Traefik (k3s ingress, :80/:443)
-       ├─ OTLP span sent to Instana agent :4317 on NODE_IP
+       ├─ OTLP span pushed to DaemonSet agent :4317 (NODE_IP or cluster-DNS)
        ├─ W3C traceparent/tracestate headers propagated downstream
        ├─ Prometheus /metrics exposed on :9100
-       │       └─ Instana agent scrapes every 1s
+       │       └─ DaemonSet agent scrapes every 1 s
        └─ Request forwarded to kong:8000 or frontend:80
 ```
+
+> **⚠️ Traefik v3 breaking change:** `--tracing.instana` and `INSTANA_AGENT_ENDPOINT` were
+> **removed in Traefik v3**. All vendor-specific tracing backends were removed. Tracing is
+> now exclusively via OTLP. Use `OTEL_EXPORTER_OTLP_ENDPOINT` — not `--tracing.instana`.
 
 ---
 
@@ -37,11 +51,17 @@ k3s v1.28+ ships Traefik v3. Run `kubectl -n kube-system exec -it deploy/traefik
 
 ---
 
-## k3s-Specific Configuration
+## Re-enabling Traefik in k3s
 
-k3s manages Traefik via an internal Helm chart. The correct way to patch it is a `HelmChartConfig` resource applied to `kube-system`. **Do not use `additionalArguments` for tracing** — use the `tracing:` Helm values block directly.
+k3s manages Traefik via an internal Helm chart. Patch it with a `HelmChartConfig` resource.
+**Do not use `additionalArguments` for tracing** — use the `tracing:` Helm values block directly.
 
-Apply with:
+### Step 1 — Remove `--disable traefik` from k3s install args
+
+Edit `/etc/systemd/system/k3s.service` or the Ansible role (`roles/k3s/tasks/main.yml`) and
+remove `--disable traefik`. Restart k3s to let it deploy Traefik.
+
+### Step 2 — Apply the HelmChartConfig for OTLP tracing
 
 ```bash
 kubectl apply -f - <<'EOF'
@@ -84,22 +104,20 @@ EOF
 
 ### Why `OTEL_EXPORTER_OTLP_ENDPOINT` instead of `tracing.otlp.grpc.endpoint`
 
-The Helm values `tracing.otlp.grpc.endpoint` is a **static string** — `$(NODE_IP)` does not expand inside YAML. Kubernetes **does** expand env var references in `env[].value` fields. Traefik v3 honours the standard `OTEL_EXPORTER_OTLP_ENDPOINT` env var and uses it to override the static endpoint, so `http://$(NODE_IP):4317` resolves correctly at pod creation time.
+The Helm values `tracing.otlp.grpc.endpoint` is a **static string** — `$(NODE_IP)` does not
+expand inside YAML. Kubernetes **does** expand env var references in `env[].value` fields.
+Traefik v3 honours the standard `OTEL_EXPORTER_OTLP_ENDPOINT` env var and uses it to override
+the static endpoint, so `http://$(NODE_IP):4317` resolves correctly at pod creation time.
 
-### Apply and restart
+### Step 3 — Apply and restart
 
 ```bash
-# Apply the HelmChartConfig (idempotent — safe to re-run)
 kubectl apply -f <your-helmchartconfig.yaml>
 kubectl -n kube-system rollout restart deployment/traefik
 kubectl -n kube-system rollout status deployment/traefik
 ```
 
----
-
-## Agent Configuration
-
-From [`instana/configuration.yaml`](../configuration.yaml):
+### Step 4 — Uncomment the sensor block in configuration.yaml
 
 ```yaml
 com.instana.plugin.traefik:
@@ -107,14 +125,9 @@ com.instana.plugin.traefik:
   poll_rate: 1    # seconds between Prometheus metrics scrapes
 ```
 
-`poll_rate: 1` gives 1-second resolution on HTTP requests and config reload metrics.
-
 ---
 
-## What is Collected
-
-### Configuration Data
-- PID, version, start time
+## What Would Be Collected
 
 ### Performance Metrics
 
@@ -126,55 +139,32 @@ com.instana.plugin.traefik:
 | Entrypoints | HTTP requests/sec per entrypoint (max 100) | 1 s |
 
 ### Tracing (Traefik v3 — OTLP)
-- Every request through Traefik generates an OTLP span
-- Span sent to Instana agent `:4317` via gRPC (insecure)
+- Every request through Traefik generates an OTLP span pushed to agent `:4317`
 - W3C `traceparent` / `tracestate` headers propagated to all downstream services
 - Connects the frontend → Kong → microservice call chain in Instana UI
 
 ---
 
-## Traffic Flow Traced in banking-demo
-
-```
-Internet
-  └─ Traefik (OTLP span → Instana agent :4317)
-       ├─ path /          → frontend:80
-       ├─ path /api/*     → kong:8000 (OTel context continues via traceparent)
-       │                       └─ auth/account/transfer/notification-service
-       └─ path /ws        → kong:8000 → notification-service (WebSocket)
-```
-
----
-
-## Verifying Tracing is Active
-
-```bash
-# 1. Check Traefik pod log — should be EMPTY (no tracing errors)
-kubectl -n kube-system logs -l app.kubernetes.io/name=traefik --tail=50 \
-  | grep -i "instana\|tracing\|otlp\|error"
-
-# 2. Confirm OTEL_EXPORTER_OTLP_ENDPOINT was set with actual node IP
-kubectl -n kube-system get pod -l app.kubernetes.io/name=traefik \
-  -o jsonpath='{.items[0].spec.containers[0].env}' | python3 -m json.tool \
-  | grep -A2 OTEL_EXPORTER
-
-# 3. Verify Prometheus metrics endpoint is accessible
-kubectl -n kube-system port-forward svc/traefik 9100:9100 &
-curl -s http://localhost:9100/metrics | grep traefik_
-
-# 4. Check Instana agent sees Traefik
-sudo grep -i "traefik" /opt/instana/agent/log/agent.log | tail -20
-```
-
----
-
-## Troubleshooting
+## Troubleshooting (if re-enabled)
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `"Instana Tracing backend has been removed in v3"` in Traefik pod log | Old `--tracing.instana=true` still in `additionalArguments` | Remove it — use `tracing.otlp.grpc` Helm values instead |
-| `"Instana tracing is not enabled"` in Instana agent log | Traefik pod not yet restarted after applying `HelmChartConfig`, or `tracing:` block missing from `valuesContent` | `kubectl rollout restart deployment/traefik -n kube-system` |
-| `FrameworkEvent ERROR: Service factory returned null (com.instana.agent.traefik.sensor.Traefik)` in agent log | Instana Traefik sensor tried to initialize while Traefik reported tracing disabled — OSGi component returns null on first bind | **Transient** — resolves automatically once Traefik pod restarts with OTLP tracing configured |
-| `"Error while getting data from host localhost"` in Kong sensor | Kong pod restarted during Traefik rollout — NodePort 32001 briefly unreachable | **Transient** — Kong sensor retries every 30 s; errors stop once Kong pod is Ready again |
-| `traefik_metrics_api_not_accessible` | Prometheus `/metrics` endpoint not exposed on `:9100` | Add `ports.metrics` block and `--entrypoints.metrics.address=:9100` to `additionalArguments` |
-| Spans missing in Instana UI after tracing configured | `OTEL_EXPORTER_OTLP_ENDPOINT` not reaching agent — check agent is listening | `sudo ss -tlnp \| grep 4317` on EC2; verify no firewall blocks pod-to-host traffic |
+| `"Instana tracing is not enabled"` in agent log | Traefik pod not restarted after `HelmChartConfig` applied | `kubectl rollout restart deployment/traefik -n kube-system` |
+| `FrameworkEvent ERROR: Service factory returned null` in agent log | Sensor initialised before Traefik reported tracing enabled | **Transient** — resolves once Traefik restarts with OTLP configured |
+| `traefik_metrics_api_not_accessible` | Prometheus `/metrics` not on `:9100` | Add `ports.metrics` block and `--entrypoints.metrics.address=:9100` |
+| Spans missing in Instana UI | `OTEL_EXPORTER_OTLP_ENDPOINT` not reaching agent | Verify DaemonSet agent pod is running: `kubectl -n instana-agent get pods` |
+
+```bash
+# Verify Traefik has the OTLP env var set correctly
+kubectl -n kube-system get pod -l app.kubernetes.io/name=traefik \
+  -o jsonpath='{.items[0].spec.containers[0].env}' | python3 -m json.tool \
+  | grep -A2 OTEL_EXPORTER
+
+# Check Prometheus metrics endpoint
+kubectl -n kube-system port-forward svc/traefik 9100:9100 &
+curl -s http://localhost:9100/metrics | grep traefik_
+
+# Check agent log for Traefik sensor
+kubectl -n instana-agent logs ds/instana-agent --tail=50 | grep -i "traefik"
+```

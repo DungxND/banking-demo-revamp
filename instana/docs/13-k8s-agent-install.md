@@ -4,7 +4,7 @@
 > - https://www.ibm.com/docs/en/instana-observability?topic=agents-installing-kubernetes
 > - https://www.ibm.com/docs/en/instana-observability?topic=agents-installing-remote-agent
 >
-> Condensed for: k3s single-node on EC2, banking-demo golang branch, namespace `banking`.
+> Condensed for: k3s single-node on EC2, banking-demo, namespace `banking`.
 
 ---
 
@@ -78,7 +78,9 @@ The Ansible playbook handles SSH, kubeconfig patching, and idempotent install in
   -e agent_key="${INSTANA_AGENT_KEY}" \
   -e agent_download_key="${INSTANA_DOWNLOAD_KEY}" \
   -e endpoint_host="${INSTANA_ENDPOINT_HOST}" \
-  -e git_token="${GITHUB_TOKEN}"
+  -e git_token="${GITHUB_PAT}"
+# GITHUB_PAT: Fine-grained PAT with Contents: read-only on banking-demo.
+# The playbook sets INSTANA_GIT_REMOTE_USERNAME=<git_token> on the agent pod.
 ```
 
 ### 3. Install directly via Helm
@@ -92,18 +94,32 @@ helm upgrade --install instana-agent \
   --set agent.key="${INSTANA_AGENT_KEY}" \
   --set agent.downloadKey="${INSTANA_DOWNLOAD_KEY}" \
   --set agent.endpointHost="${INSTANA_ENDPOINT_HOST}" \
-  --set agent.env.INSTANA_GIT_REMOTE_USERNAME="${GITHUB_TOKEN}" \
+  --set agent.env.INSTANA_GIT_REMOTE_REPOSITORY="https://github.com/dungxnd/banking-demo.git" \
+  --set agent.env.INSTANA_GIT_REMOTE_BRANCH="main" \
+  --set "agent.env.INSTANA_GIT_REMOTE_USERNAME=${GITHUB_PAT}" \
   instana-agent
 ```
 
-**Key parameters (all in `instana/helm-agent-values.yaml` except secrets):**
+> **Do NOT pass `INSTANA_GIT_REMOTE_PASSWORD`.**
+> The `InstanaAgent` CRD schema requires all `spec.agent.env` values to be non-null strings.
+> Both `--set key=` and `--set-string key=` produce a null YAML scalar when the value is empty,
+> which fails CRD server-side apply with:
+> `spec.agent.env.INSTANA_GIT_REMOTE_PASSWORD in body must be of type string: "null"`
+> GitHub basic auth only needs the PAT as the username — omitting the password field entirely
+> is correct and the agent works without it.
+
+**Key parameters (secrets via `--set`, static values in `instana/helm-agent-values.yaml`):**
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
 | `agent.key` | From Instana UI → Settings → Agents | Required — via `--set` only |
-| `agent.endpointHost` | e.g. `ingress-red-saas.instana.io` | Required — via `--set` only |
+| `agent.endpointHost` | e.g. `ingress-orange-saas.instana.io` | Required — via `--set` only |
 | `agent.endpointPort` | `443` | Set in values file |
-| `cluster.name` | `banking-demo-k3s` | Set in values file |
+| `agent.env.INSTANA_GIT_REMOTE_REPOSITORY` | `https://github.com/dungxnd/banking-demo.git` | Via `--set` only |
+| `agent.env.INSTANA_GIT_REMOTE_BRANCH` | `main` | Via `--set` only |
+| `agent.env.INSTANA_GIT_REMOTE_USERNAME` | GitHub Fine-grained PAT | Via `--set` only — never commit |
+| `agent.env.INSTANA_GIT_REMOTE_PASSWORD` | *(omit entirely)* | Do NOT pass — CRD rejects null string |
+| `cluster.name` | `banking-dung` | Set in values file |
 | `zone.name` | `banking-dung-ec2` | Set in values file |
 | `k8s_sensor.deployment.enabled` | `true` | Set in values file |
 
@@ -158,13 +174,13 @@ spec:
     endpointHost: '<YOUR_INSTANA_BACKEND_HOST>'
     endpointPort: 443
     env:
-      INSTANA_GIT_REMOTE_REPOSITORY: "https://github.com/DungxND/banking-demo.git"
-      INSTANA_GIT_REMOTE_BRANCH: "golang"
-      # INSTANA_GIT_REMOTE_USERNAME: set via kubectl create secret or CI
-      INSTANA_GIT_REMOTE_PASSWORD: ""
+      INSTANA_GIT_REMOTE_REPOSITORY: "https://github.com/dungxnd/banking-demo.git"
+      INSTANA_GIT_REMOTE_BRANCH: "main"
+      INSTANA_GIT_REMOTE_USERNAME: "<YOUR_GITHUB_PAT>"  # Fine-grained PAT, Contents: read
+      INSTANA_GIT_REMOTE_PASSWORD: ""                   # intentionally empty
 
   cluster:
-    name: banking-demo-k3s
+    name: banking-dung
 
   zone:
     name: banking-dung-ec2
@@ -308,20 +324,20 @@ http://instana-agent.instana-agent.svc.cluster.local:4318  # HTTP
 
 ## Git-based Configuration Management (DaemonSet mode)
 
-The DaemonSet agent pulls `instana/configuration.yaml` directly from the `golang` branch on
+The DaemonSet agent pulls `instana/configuration.yaml` directly from the `main` branch on
 every startup and on every hot-reload triggered via the Instana Web API. A `helm upgrade`
 is **not required** when only sensor configuration changes.
 
 ### How it works
 
 ```
-git push instana/configuration.yaml → golang branch
+git push instana/configuration.yaml → main branch
         ↓
 GitHub Actions (.github/workflows/instana-gitops.yml)
         ↓  POST /api/host-agent/update?query=entity.zone:"banking-dung-ec2"
 Instana backend sends reload command to matching agents
         ↓
-instana-agent DaemonSet pod: git pull golang branch → applies configuration.yaml
+instana-agent DaemonSet pod: git pull main branch → applies configuration.yaml
         ↓  (~30 s)
 New sensor config active
 ```
@@ -335,7 +351,7 @@ vim instana/configuration.yaml
 # 2. Commit and push
 git add instana/configuration.yaml
 git commit -m "fix(instana): update postgresql password"
-git push origin golang
+git push origin main
 
 # 3. GitHub Actions triggers automatically — watch the Actions tab
 

@@ -1,43 +1,63 @@
 # Kong API Gateway Sensor
 
 > **Source:** https://www.ibm.com/docs/en/instana-observability/current?topic=technologies-monitoring-kong-api-gateway
-> Condensed for: Kong 3.9 DB-less, remote monitoring from Instana host agent on EC2
+> Condensed for: Kong 3.9 DB-less, monitored by Instana DaemonSet agent from within the cluster
 
 ---
 
 ## How It Works
 
-The Instana Kong sensor is **automatically installed** after the host agent is running. For remote monitoring (agent on EC2 host, Kong inside k3s cluster), configure the sensor with the Kong Admin API address.
+The Instana Kong sensor is **automatically installed** after the agent starts. The DaemonSet
+agent pod reaches Kong's Admin API directly via cluster-internal DNS — no NodePort needed.
 
 ```
-Instana agent (EC2 host)
-  └─ HTTP poll every 30s → kong.banking.svc.cluster.local:8001 (Admin API)
-  └─ Prometheus scrape → kong-proxy :8000/metrics (via Prometheus plugin)
+DaemonSet agent pod (instana-agent namespace)
+  └─ HTTP poll every 30 s → kong.banking.svc.cluster.local:8001 (Admin API)
+```
+
+Kong also emits distributed traces via its OTel plugin (push to agent `:4318`):
+
+```
+Kong (banking namespace)
+  └─ OTLP/HTTP span → instana-agent.instana-agent.svc.cluster.local:4318/v1/traces
 ```
 
 ---
 
 ## Prerequisites
 
-### 1. Kong Admin API accessibility
+### 1. Kong Admin API accessible within the cluster
 
-In banking-demo, Kong's admin API is bound to `127.0.0.1:8001` inside the pod (loopback only).
-The admin port is **not** exposed via a NodePort in the current deployment, so the host agent
-cannot reach it and the Kong sensor block is **commented out** in
-[`instana/configuration.yaml`](../configuration.yaml).
+`KONG_ADMIN_LISTEN=0.0.0.0:8001` is set in [`helm/values.yaml`](../../helm/values.yaml) so
+Kong binds the admin interface on all interfaces (not just loopback). Port 8001 is exposed
+on the Kong ClusterIP Service in [`helm/templates/kong.yaml`](../../helm/templates/kong.yaml),
+making it reachable from the `instana-agent` namespace via `kong.banking.svc.cluster.local:8001`.
 
 ### 2. Prometheus plugin enabled
 
-The sensor depends on the Kong Prometheus plugin for latency, bandwidth, and request metrics. Enabled globally in the Kong declarative config (see [`helm/templates/kong.yaml`](../../helm/templates/kong.yaml)):
+The sensor depends on the Kong Prometheus plugin for latency, bandwidth, and request metrics.
+Enabled as a global plugin in [`helm/values.yaml`](../../helm/values.yaml):
 
 ```yaml
-plugins:
+globalPlugins:
   - name: prometheus
+```
+
+### 3. OTel plugin enabled
+
+Distributed tracing for Kong requests is handled by the Kong OTel plugin, also a global plugin:
+
+```yaml
+  - name: opentelemetry
     config:
-      status_code_metrics: true
-      latency_metrics: true
-      bandwidth_metrics: true
-      upstream_health_metrics: true
+      traces_endpoint: "http://instana-agent.instana-agent.svc.cluster.local:4318/v1/traces"
+      resource_attributes:
+        service.name: kong
+        service.namespace: banking-demo
+      propagation:
+        default_format: w3c
+        extract: [w3c]
+        inject:  [w3c]
 ```
 
 ---
@@ -54,29 +74,24 @@ Banking-demo uses Kong 3.9.
 
 ## Agent Configuration
 
-The Kong admin API is not currently reachable from the host agent — see Prerequisites above.
-To enable once a Kong admin NodePort (e.g. 32001) is added, add to `configuration.yaml`:
+From [`instana/configuration.yaml`](../configuration.yaml):
 
 ```yaml
 com.instana.plugin.kong:
   enabled: true
-  dataset_size: 10                         # max rows for service/route metrics
-  status_code_group: '2xx,3xx,4xx,5xx'    # status code buckets to collect
+  dataset_size: 10
+  status_code_group: '2xx,3xx,4xx,5xx'
   remote:
-    - host: '127.0.0.1'
-      port: '32001'                        # NodePort — expose admin on this port first
+    - host: 'kong.banking.svc.cluster.local'
+      port: '8001'
       availabilityZone: 'banking-dung-ec2'
-      poll_rate: 30                        # seconds (minimum: 30 per Instana docs)
+      poll_rate: 30        # minimum: 30 s per IBM docs
       protocol: 'http'
-      # username: ''   # only if RBAC basic auth enabled
-      # password: ''
-      # admin_token: ''  # only if Kong-Admin-Token RBAC enabled
 ```
 
 ### Key Notes
 
 - `poll_rate` minimum is **30 seconds** — do not set lower
-- Kong admin API must be reachable from the EC2 host before enabling the sensor
 - No auth configured — banking-demo Kong runs DB-less without RBAC
 - Multiple `remote` entries can be listed for multiple Kong instances
 
@@ -94,49 +109,53 @@ com.instana.plugin.kong:
 
 ---
 
-## Kong Routes Monitored (banking-demo, Go branch)
+## Kong Routes (banking-demo)
 
-Kong proxies all API traffic to `api-producer` (port 8080) and WebSocket traffic to `notification-service` (port 8004).
+Kong proxies all API traffic to `api-producer` (port 8080) and WebSocket traffic to
+`notification-service` (port 8004). All routes are path-prefix matched.
 
-| Route | HTTP method | Upstream | Notes |
-|-------|------------|----------|-------|
-| `/api/users` | POST | api-producer:8080 | Register / lookup |
-| `/api/sessions` | POST, DELETE | api-producer:8080 | Login / logout |
-| `/api/users/me` | GET | api-producer:8080 | Profile |
-| `/api/users/me/balance` | GET | api-producer:8080 | Balance |
-| `/api/transfers` | POST | api-producer:8080 | Initiate transfer |
-| `/api/notifications` | GET | api-producer:8080 | Notifications list |
-| `/api/health/*` | GET | api-producer:8080 | Per-service health |
-| `/api/admin/*` | GET | api-producer:8080 | Admin endpoints |
-| `/ws` | — | notification-service:8004 | WebSocket (bypasses api-producer) |
+| Route | Protocols | Upstream | Notes |
+|-------|-----------|----------|-------|
+| `/api` | http, https | api-producer:8080 | All REST API — strip_path: false |
+| `/ws` | http, https | notification-service:8004 | WebSocket upgrade — strip_path: false |
+| `/` | http, https | frontend:80 | SPA catch-all |
 
-> **Note (Go branch):** All REST API routes go through `api-producer` (the Go Chi HTTP server),
-> which forwards them as NATS RPC calls to the consumer services. Only WebSocket connections
-> (`/ws`) bypass `api-producer` and reach `notification-service` directly.
+> All REST API routes go through `api-producer` (Go Chi HTTP server), which forwards them as
+> NATS RPC calls to the consumer services. Only WebSocket connections (`/ws`) bypass
+> `api-producer` and reach `notification-service` directly.
 
 ---
 
 ## Verifying in Instana UI
 
-1. **Infrastructure → EC2 node → Kong** — Kong dashboard with request rates, latency
-2. **Services → kong** — service health and call graph
-3. Check agent log:
+1. **Infrastructure → Kubernetes → `banking` → kong** — Kong dashboard with request rates, latency
+2. **Applications → Services → kong** — service health and call graph
+3. **Analytics → Calls** — filter `service.name=kong` to see OTel spans
 
 ```bash
-sudo grep -i "kong" /opt/instana/agent/log/agent.log | tail -20
+# Check sensor is active in agent logs
+kubectl -n instana-agent logs ds/instana-agent --tail=50 | grep -i "kong"
+# Expected: "Activated Sensor ... kong" or "Kong sensor activated"
+
+# Verify Admin API is reachable from within the cluster
+kubectl -n instana-agent exec ds/instana-agent -- \
+  sh -c 'curl -sf http://kong.banking.svc.cluster.local:8001/status | head -c 200'
+# Expected: {"database":{"reachability":true ...}
+
+# Verify OTel traces are reaching the agent
+kubectl -n instana-agent logs ds/instana-agent --tail=50 | grep -i "otlp\|kong.*span"
 ```
 
 ### Common Issue: `kong_admin_api_not_accessible`
 
-Cause: The agent cannot reach the Admin API.
+Cause: Agent cannot reach the Admin API.
 
-Fix: Verify the Kubernetes Service is reachable from the EC2 host:
+Checklist:
+1. `KONG_ADMIN_LISTEN=0.0.0.0:8001` is set in `helm/values.yaml` kong env block
+2. Port 8001 is listed in the Kong ClusterIP Service (`helm/templates/kong.yaml`)
+3. `host: 'kong.banking.svc.cluster.local'` matches the Service name and namespace
 
 ```bash
-# From EC2 host — test Kong admin API via cluster DNS
-curl http://kong.banking.svc.cluster.local:8001/status
-
-# Or use the ClusterIP directly
-kubectl -n banking get svc kong -o jsonpath='{.spec.clusterIP}'
-curl http://<CLUSTER_IP>:8001/status
+# Confirm Kong Service exposes port 8001
+kubectl -n banking get svc kong -o jsonpath='{.spec.ports}'
 ```

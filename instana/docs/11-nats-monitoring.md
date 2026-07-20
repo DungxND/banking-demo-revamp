@@ -190,16 +190,24 @@ NATS :8222 (HTTP monitoring)
               └─ Instana UI → Infrastructure → Custom Metrics
 ```
 
-The Instana agent auto-discovers Prometheus endpoints on known ports. Configure explicitly
-if auto-discovery does not pick up port 7777:
+The DaemonSet agent auto-discovers Prometheus endpoints via pod annotations. The nats-exporter
+pod carries the standard annotations (see `helm/templates/nats.yaml`):
 
 ```yaml
-# instana/configuration.yaml — add Prometheus scrape config
+prometheus.io/scrape: "true"
+prometheus.io/port: "7777"
+```
+
+This is handled by the `prometheusAnnotations: strict` setting in `configuration.yaml` —
+no explicit `endpoints:` block is needed. To add one manually as a fallback:
+
+```yaml
+# instana/configuration.yaml — explicit Prometheus scrape (fallback only)
 com.instana.plugin.prometheus:
-  enabled: true
-  endpoints:
-    - url: http://nats-exporter.banking.svc.cluster.local:7777/metrics
-      poll_rate: 10
+  prometheusAnnotations: strict
+  # endpoints:
+  #   - url: http://nats-exporter.banking.svc.cluster.local:7777/metrics
+  #     poll_rate: 10
 ```
 
 > **Instana NATS tracing:** IBM Instana has no native Go NATS sensor. Distributed trace
@@ -225,6 +233,6 @@ com.instana.plugin.prometheus:
 
 | File | What it covers |
 |------|----------------|
-| [`03-opentelemetry.md`](./03-opentelemetry.md) | Go OTel SDK, NATS trace propagation gap |
+| [`03-opentelemetry.md`](./03-opentelemetry.md) | Go OTel SDK, NATS W3C trace propagation |
 | [`09-pod-service-detection.md`](./09-pod-service-detection.md) | Why NATS consumer services may not appear in Applications → Services |
 | [`ARCH-NATS-RPC.md`](../../ARCH-NATS-RPC.md) | Full NATS subject hierarchy and nats/micro patterns |

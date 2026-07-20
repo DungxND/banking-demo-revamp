@@ -131,14 +131,20 @@ com.instana.tracing:
     - x-instana-l
 
 # ---------------------------------------------------------------------------
-# Secrets — redact sensitive keys from collected config/env data
+# Secrets — redact sensitive keys from collected config/env data.
+#
+# WARNING: do NOT add "password" or "key" to this list.
+#   Instana applies the secrets filter to its OWN sensor config before
+#   connecting.  "password" redacts the postgresql (and redis) password fields
+#   to "" → SCRAM auth fails with error 08004.
+#   "key" is too broad — it redacts internal agent fields (INSTANA_AGENT_KEY).
+#   Sensitive values are covered by the explicit DATABASE_URL / REDIS_URL
+#   / NATS_URL entries below.
 # ---------------------------------------------------------------------------
 com.instana.secrets:
   matcher: contains-ignore-case
   list:
-    - password
     - secret
-    - key
     - token
     - DATABASE_URL
     - REDIS_URL

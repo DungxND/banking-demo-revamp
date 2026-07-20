@@ -4,60 +4,33 @@
 > https://www.ibm.com/docs/en/instana-observability/current?topic=kubernetes-checking-agent-prerequisites
 > Condensed for: k3s single-node on EC2 (banking-demo golang branch, namespace `banking`)
 >
-> **Recommended install:** The Kubernetes Helm agent (DaemonSet inside k3s) is the preferred
-> approach — see [`13-k8s-agent-install.md`](./13-k8s-agent-install.md). This document covers
-> the legacy EC2 host-agent (systemd) mode for reference.
+> **Current install:** Kubernetes Helm DaemonSet agent (namespace `instana-agent`).
+> See [`13-k8s-agent-install.md`](./13-k8s-agent-install.md) for full install reference.
+> The legacy EC2 host-agent (systemd) mode is documented in [`01-agent-install.md`](./01-agent-install.md) for reference only.
 
 ---
 
-## How the Instana Agent Works with k3s
+## How the Instana DaemonSet Agent Works with k3s
 
-The Instana **host agent** runs directly on the EC2 instance (not inside the cluster) and:
+The Instana agent runs **inside** the k3s cluster as a DaemonSet (one pod per node) plus a
+dedicated `k8sensor` Deployment:
 
-1. Reads the k3s kubeconfig at `/etc/rancher/k3s/k3s.yaml`
-2. Discovers all pods, deployments, services, namespaces via the Kubernetes API
-3. Automatically deploys technology-specific sensors (Kong, Redis, PostgreSQL, Traefik)
-4. Forwards spans/metrics from pods via OTLP to port 4317 on the node IP
-
-> **`enabled: true` is required in host-agent mode** (systemd install on EC2). Without it, the
-> k8s sensor deactivates immediately, and zero pods/services/namespaces are reported — even
-> though the Containerd sensor still shows raw container IDs.
-> The `kubeconfig` path must point to the k3s kubeconfig, and the file must be world-readable
-> (`chmod 644 /etc/rancher/k3s/k3s.yaml`).
-
----
-
-## Prerequisites on k3s (EC2)
-
-```bash
-# Make kubeconfig readable by the agent (runs as root but good practice)
-sudo chmod 644 /etc/rancher/k3s/k3s.yaml
-
-# Verify the cluster is reachable
-sudo kubectl get nodes
-# Expected: node in Ready state
+```
+instana-agent namespace
+  ├── DaemonSet: instana-agent   (one pod on the k3s node)
+  │     ├── host metrics, process sensor
+  │     ├── OTLP receiver  :4317 (gRPC) / :4318 (HTTP)
+  │     ├── go-sensor receiver  :42699
+  │     ├── Prometheus scrape (pod annotations, nats-exporter)
+  │     ├── PostgreSQL sensor  → postgres.banking.svc.cluster.local:5432
+  │     ├── Redis sensor       → auto-discovered via containerd
+  │     └── Kong sensor        → kong.banking.svc.cluster.local:8001
+  └── Deployment: k8sensor       (dedicated Kubernetes API watcher)
+        └── reports pods / services / namespaces / workloads to Instana backend
 ```
 
-The Instana agent requires **privileged mode** to auto-instrument workloads. On a bare EC2 host agent this is satisfied automatically (no pod security constraints apply to the host process).
-
-### RBAC (if running agent inside cluster)
-
-If you switch to running the agent as a DaemonSet inside k3s (instead of on the host), deploy with Helm:
-
-```bash
-helm repo add instana https://agents.instana.io/helm
-helm install instana-agent instana/instana-agent \
-  --namespace instana-agent \
-  --create-namespace \
-  --set agent.key=<AGENT_KEY> \
-  --set agent.endpointHost=<INSTANA_BACKEND_HOST> \
-  --set cluster.name=banking-ec2-k3s \
-  --set k8s_sensor.deployment.enabled=true
-```
-
-> `k8s_sensor.deployment.enabled=true` is the default. Setting it explicitly follows IBM docs guidance: *"If you specify the `k8s_sensor.deployment.enabled` value, make sure that it is set to `true`."* Without it, the Next Generation K8sensor (which replaced the EOL legacy sensor) may not deploy if the value is accidentally overridden.
-
-The Helm chart creates all required RBAC (ClusterRole, ClusterRoleBinding, ServiceAccount).
+The k8sensor Deployment handles all Kubernetes object discovery via in-cluster RBAC —
+no kubeconfig file or `chmod 644` is required.
 
 ---
 
@@ -69,8 +42,11 @@ The Helm chart creates all required RBAC (ClusterRole, ClusterRoleBinding, Servi
 | Deployments / StatefulSets | ✔ |
 | Services | ✔ |
 | Namespaces | ✔ |
-| k3s Traefik ingress | ✔ (via Traefik sensor) |
 | NATS JetStream | ✔ (port 8222 HTTP monitor, if enabled) |
+
+> **Traefik:** k3s is installed with `--disable traefik` (see `roles/k3s/tasks/main.yml`).
+> Traefik is **not running** in this cluster. Kong handles all ingress via hostPort.
+> The Traefik sensor block in `configuration.yaml` is commented out.
 
 ### banking-demo namespace resources discovered
 
@@ -86,18 +62,20 @@ The Helm chart creates all required RBAC (ClusterRole, ClusterRoleBinding, Servi
 | nats | StatefulSet | `nats` |
 | postgres | StatefulSet | `postgresql` (sensor) |
 | redis | StatefulSet | `redis` (sensor) |
-| traefik | DaemonSet (kube-system) | `traefik` (sensor) |
 
 ---
 
-## Agent Configuration for k3s
+## Agent Configuration
 
-From [`instana/configuration.yaml`](../configuration.yaml):
+The DaemonSet agent pulls [`instana/configuration.yaml`](../configuration.yaml) from the
+`main` git branch on every startup (git-based config management). Key blocks:
 
 ```yaml
-com.instana.plugin.kubernetes:
-  enabled: true               # host-agent mode: must be true to monitor k8s
-  kubeconfig: /etc/rancher/k3s/k3s.yaml
+# K8s context awareness — DaemonSet mode uses in-cluster RBAC automatically.
+# kubeconfig is NOT needed; do NOT set it here.
+# (Commented out — k8sensor handles K8s object discovery.)
+# com.instana.plugin.kubernetes:
+#   enabled: true
 
 com.instana.zone:
   name: banking-dung-ec2
@@ -108,30 +86,21 @@ com.instana.tags:
   - project: banking-demo
 ```
 
-> **`enabled: true` is required for host-agent installs.** The agent reads the kubeconfig directly
-> and reports pods, services, namespaces, and deployments to Instana. With `enabled: false` the
-> agent discovers zero Kubernetes resources.
->
-> This is different from a Helm/Operator install, where the k8sensor Deployment handles
-> Kubernetes monitoring. Run `kubectl get deployments --all-namespaces -l app=k8sensor` — if no
-> results, you are in host-agent mode and **must** have `enabled: true`.
->
-> **After changing `enabled`, always restart the agent**:
-> ```bash
-> sudo systemctl restart instana-agent
-> sudo grep -i "kubernetes\|Activated" /opt/instana/agent/log/agent.log | tail -10
-> ```
-
-The `zone` groups the host in the Application Perspective drop-downs in the Instana UI.
+> **DaemonSet vs host-agent:** With the Helm DaemonSet agent, `com.instana.plugin.kubernetes`
+> does not need to be set — the k8sensor Deployment handles K8s API discovery using the
+> mounted ServiceAccount token. The `kubeconfig` field and `enabled: true` are only required
+> for the legacy EC2 host-agent (systemd) install where the agent runs outside the cluster.
 
 ---
 
-## OTLP Flow: Pods → Instana Agent
+## OTLP Flow: Pods → DaemonSet Agent
 
-Each banking-demo pod sends OTLP traces to the **node IP** (not 127.0.0.1) because the agent runs on the host, not inside the cluster network:
+Each banking-demo pod sends OTLP traces to the DaemonSet agent using one of two patterns:
 
 ```yaml
-# In each Deployment (e.g. auth-service.yaml)
+# Pattern 1 — NODE_IP (used by all Go services and Traefik)
+# Stays on-node: $(NODE_IP) = status.hostIP = the k3s node IP.
+# The DaemonSet pod runs on the host network of that same node.
 env:
   - name: NODE_IP
     valueFrom:
@@ -139,50 +108,76 @@ env:
         fieldPath: status.hostIP
   - name: OTEL_EXPORTER_OTLP_ENDPOINT
     value: "http://$(NODE_IP):4317"
+  - name: INSTANA_AGENT_HOST
+    value: "$(NODE_IP)"        # go-sensor native protocol :42699
+
+# Pattern 2 — cluster-DNS Service (used by Nginx/frontend)
+# nginx.conf cannot interpolate env vars in directives; uses the stable FQDN instead.
+# otel_exporter { endpoint instana-agent.instana-agent.svc.cluster.local:4317; }
 ```
 
-The agent listens on `0.0.0.0:4317` by default and forwards spans to the Instana backend.
+The Helm chart creates a `instana-agent` ClusterIP Service automatically, so both
+patterns work simultaneously from any namespace.
 
 ---
 
 ## Verifying Kubernetes Monitoring
 
+```bash
+# Agent pods running
+kubectl -n instana-agent get pods
+# Expected:
+#   instana-agent-<hash>   1/1   Running   (DaemonSet — one per node)
+#   k8sensor-<hash>        1/1   Running   (k8s object watcher)
+
+# k8s resources visible in Instana
+kubectl -n instana-agent logs ds/instana-agent --tail=50 \
+  | grep -i "kubernetes\|k8s\|banking\|Activated"
+
+# OTLP ports listening inside the agent pod
+kubectl -n instana-agent exec ds/instana-agent -- sh -c 'ss -tlnp | grep -E "4317|4318|42699"'
+```
+
 After the agent starts:
 
-1. **Instana UI → Infrastructure** — the EC2 node appears with all k3s pods shown beneath it
-2. **Instana UI → Kubernetes** — shows the `banking` namespace with all workloads
-3. **Instana UI → Applications → Services** — `api-producer`, `auth-service`, `account-service`, etc. appear **only after first OTLP traces arrive**
+1. **Instana UI → Infrastructure → Kubernetes** — shows the `banking` namespace with all workloads
+2. **Instana UI → Infrastructure → Hosts** — EC2 node appears
+3. **Instana UI → Applications → Services** — `api-producer`, `auth-service`, etc. appear **only after first OTLP traces arrive**
 
-> **Important**: Pods being visible in Infrastructure ≠ services visible in Applications. Services appear only after traces flow. See [`09-pod-service-detection.md`](./09-pod-service-detection.md) for the full explanation and fix.
-
-### Logs to check on the agent
-
-```bash
-sudo grep -i "kubernetes\|k3s\|banking" /opt/instana/agent/log/agent.log | tail -30
-```
+> **Important**: Pods being visible in Infrastructure ≠ services visible in Applications.
+> Services appear only after traces flow. See [`09-pod-service-detection.md`](./09-pod-service-detection.md).
 
 ---
 
-## Traefik Integration (k3s — Traefik v3 OTLP)
+## Kong Integration
 
-k3s ships Traefik as its built-in ingress. The [`helm/traefik-instana.yaml`](../../helm/traefik-instana.yaml) `HelmChartConfig` patches it with **OTLP tracing** (not the removed `--tracing.instana` flag):
+Kong handles all ingress in this cluster (no Traefik). The Instana Kong sensor polls
+Kong's Admin API from within the cluster:
 
-```yaml
-# Traefik v3 — vendor-specific backends removed; tracing is OTLP only
-env:
-  - name: NODE_IP
-    valueFrom:
-      fieldRef:
-        fieldPath: status.hostIP
-  - name: OTEL_EXPORTER_OTLP_ENDPOINT
-    value: "http://$(NODE_IP):4317"
-tracing:
-  otlp:
-    grpc:
-      endpoint: "localhost:4317"
-      insecure: true
+```
+DaemonSet agent pod
+  └─ HTTP poll every 30 s → kong.banking.svc.cluster.local:8001 (Admin API)
 ```
 
-> **Breaking change from Traefik v2:** `--tracing.instana=true` and `INSTANA_AGENT_ENDPOINT`/`INSTANA_AGENT_ENDPOINT_PORT` were **removed in Traefik v3**. Any config using those flags will cause Traefik to fail to start. Use `OTEL_EXPORTER_OTLP_ENDPOINT` instead.
+`KONG_ADMIN_LISTEN=0.0.0.0:8001` is set in `helm/values.yaml` so the admin port is
+reachable from the `instana-agent` namespace via the Kong ClusterIP Service.
 
-See [`05-traefik-sensor.md`](./05-traefik-sensor.md) for full Traefik v3 OTLP details.
+See [`04-kong-sensor.md`](./04-kong-sensor.md) for full Kong sensor details.
+
+---
+
+## Legacy: EC2 Host-Agent (systemd) Notes
+
+> These notes apply **only** to the legacy systemd install on EC2. Skip if using the DaemonSet agent.
+
+In the legacy host-agent mode the agent runs on the EC2 host outside the cluster and
+requires:
+
+- `com.instana.plugin.kubernetes: enabled: true` + `kubeconfig: /etc/rancher/k3s/k3s.yaml`
+- `sudo chmod 644 /etc/rancher/k3s/k3s.yaml` (k3s recreates it `600` on every restart)
+- NodePorts for Redis (32002) and Kong admin (32001) so the host-agent can reach them
+- `sudo systemctl restart instana-agent` after any config change
+
+See [`01-agent-install.md`](./01-agent-install.md) and
+[`10-host-agent-k8s-detection-fix.md`](./10-host-agent-k8s-detection-fix.md) for the
+full host-agent setup and troubleshooting guide.

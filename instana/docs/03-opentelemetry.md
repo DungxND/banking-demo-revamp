@@ -2,7 +2,7 @@
 
 > **Source:** https://www.ibm.com/docs/en/instana-observability/current?topic=opentelemetry
 > https://www.ibm.com/docs/en/instana-observability/current?topic=instana-agent (Sending OTel to agent)
-> Condensed for: banking-demo Go microservices sending OTLP → Instana agent on EC2
+> Condensed for: banking-demo Go microservices sending OTLP → Instana DaemonSet agent on k3s
 
 ---
 
@@ -11,11 +11,11 @@
 ```
 Go service (api-producer / auth / account / transfer / notification)
   └─ go.opentelemetry.io/otel SDK
-       └─ OTLP/gRPC exporter → http://<NODE_IP>:4317
+       └─ OTLP/gRPC exporter → http://$(NODE_IP):4317
+                                        │              (or cluster-DNS Service — see below)
+                              Instana DaemonSet agent pod (instana-agent namespace)
                                         │
-                              Instana host agent (EC2)
-                                        │
-                              Instana backend (SaaS)
+                              Instana backend (SaaS) :443
 ```
 
 Every service calls [`internal/tracing.Init()`](../../internal/tracing/tracing.go) at startup:
@@ -25,8 +25,9 @@ Every service calls [`internal/tracing.Init()`](../../internal/tracing/tracing.g
 - Returns a shutdown function that flushes buffered spans within 5 s on `SIGTERM`
 - When `OTEL_EXPORTER_OTLP_ENDPOINT` is empty, installs a no-op propagator and skips export silently
 
-The `api-producer` additionally wraps the Chi router with `otelhttp.NewHandler` so every HTTP
-request automatically generates an OTel span — no per-handler instrumentation needed.
+`api-producer` and `notification-service` additionally wrap their Chi routers with
+`otelhttp.NewHandler` so every HTTP request (and WebSocket upgrade for `/ws`) automatically
+generates an OTel span — no per-handler instrumentation needed.
 
 ---
 
@@ -46,12 +47,10 @@ com.instana.plugin.opentelemetry:
 
 ### Ports
 
-| Protocol | Port | Default |
+| Protocol | Port | Used by |
 |----------|------|---------|
-| OTLP/gRPC | 4317 | enabled |
-| OTLP/HTTP | 4318 | enabled |
-
-> **Important:** The agent listens on `0.0.0.0` by default. Pods reach it via the node IP (`status.hostIP`), not `localhost`.
+| OTLP/gRPC | 4317 | Go services, Traefik, Nginx (`ngx_otel_module`) |
+| OTLP/HTTP | 4318 | Kong OTel plugin |
 
 ---
 
@@ -67,19 +66,30 @@ env:
         fieldPath: status.hostIP
   - name: OTEL_EXPORTER_OTLP_ENDPOINT
     value: "http://$(NODE_IP):4317"
+  - name: INSTANA_AGENT_HOST       # go-sensor native protocol
+    value: "$(NODE_IP)"
   - name: OTEL_SERVICE_NAME
     value: auth-service
   - name: OTEL_RESOURCE_ATTRIBUTES
     value: "service.namespace=banking-demo"
 ```
 
-`internal/tracing.Init()` reads `OTEL_EXPORTER_OTLP_ENDPOINT` directly — no `OTEL_SERVICE_NAME`
-environment variable is forwarded to the SDK; the service name is hardcoded as the `serviceName`
-constant in each service's `main.go` and embedded in the OTel `resource.Resource`.
+`internal/tracing.Init()` reads `OTEL_EXPORTER_OTLP_ENDPOINT` directly. The service name is
+hardcoded as the `serviceName` constant in each service's `main.go` and embedded in the OTel
+`resource.Resource`; `OTEL_SERVICE_NAME` is set for tooling that reads it directly (e.g.
+Instana auto-correlation) but the Go SDK uses the value passed to `tracing.Init()`.
 
-The `$(NODE_IP)` substitution is performed by the Kubernetes kubelet when the pod is created —
-it resolves to the EC2 host IP. The OTLP exporter then connects to that IP on port 4317 where
-the host agent is listening.
+### Two valid OTLP destinations in DaemonSet mode
+
+| Pattern | Endpoint | Best for |
+|---------|----------|----------|
+| **NODE_IP** (used by banking-demo) | `http://$(NODE_IP):4317` | Keeps traffic on-node; no cross-node hops |
+| **Cluster-DNS Service** | `http://instana-agent.instana-agent.svc.cluster.local:4317` | Works from any namespace; used by Nginx (can't expand env vars in `nginx.conf`) |
+
+`$(NODE_IP)` resolves to `status.hostIP` — the IP of the Kubernetes node the pod is
+scheduled on. The DaemonSet agent pod runs on the host network of that same node, so the
+connection stays local. The Helm chart creates the `instana-agent` cluster-wide Service
+automatically (`service.create=true` in the agent Helm values).
 
 ---
 
@@ -87,8 +97,8 @@ the host agent is listening.
 
 ### Tracing library
 
-All services use [`internal/tracing`](../../internal/tracing/tracing.go) — a thin wrapper around
-`go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc`:
+All services use [`internal/tracing`](../../internal/tracing/tracing.go) — a thin wrapper
+around `go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc`:
 
 ```go
 // In each service's main.go (e.g. auth-service)
@@ -96,10 +106,9 @@ shutdownTracing := tracing.Init(serviceName, cfg.OTLPEndpoint, logger)
 defer shutdownTracing(context.Background())
 ```
 
-### HTTP instrumentation (api-producer)
+### HTTP instrumentation (api-producer, notification-service)
 
-The `api-producer` wraps its Chi router with `otelhttp.NewHandler` from
-`go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp`:
+`notification-service` wraps its Chi router with `otelhttp.NewHandler` only:
 
 ```go
 server := &http.Server{
@@ -108,14 +117,56 @@ server := &http.Server{
 }
 ```
 
-This generates a span per HTTP request with:
+`api-producer` uses a two-layer wrapper — the go-sensor's `TracingHandlerFunc` on the outside,
+`otelhttp` on the inside:
+
+```go
+// producer/main.go
+instanaHandler := instana.TracingHandlerFunc(
+    tracing.Collector(),
+    "/",
+    otelhttp.NewHandler(router, serviceName).ServeHTTP,
+)
+server := &http.Server{
+    Handler: instanaHandler,
+    ...
+}
+```
+
+Handler order: **`instana.TracingHandlerFunc` → `otelhttp.NewHandler` → chi router**
+
+- The instana wrapper fires first: starts a `g.http` span via the native Instana OpenTracing
+  tracer → sent to agent `:42699`. This span extracts `traceparent` from the inbound request
+  (from Kong), encodes it into Instana's native trace/span ID format, and re-injects a
+  matching `traceparent` into the response headers — so the native span and downstream OTel
+  spans share the same W3C trace ID. This `g.http` span is what Instana uses to classify
+  the service as technology **Go**.
+- `otelhttp` fires second: emits an OTel `SpanKindServer` HTTP span → agent `:4317`,
+  continues the same trace context downstream into NATS RPC calls.
+
+Both handlers generate a span per HTTP request with:
 - `http.method`, `http.route`, `http.status_code` attributes
-- W3C `traceparent`/`tracestate` header extraction from inbound requests (from Traefik)
-- Span propagation to downstream NATS RPC calls via context
+- W3C `traceparent`/`tracestate` header extraction from inbound requests (from Kong / Traefik)
+- Span propagation to downstream NATS RPC calls via context (api-producer)
+- Long-lived WebSocket session span for the `/ws` upgrade (notification-service)
+
+> **Why api-producer needs both wrappers but the NATS services don't**
+>
+> The four NATS consumer services (auth / account / transfer / notification) are detected as
+> **Go** because their primary activity is NATS message consumption — the go-sensor's process
+> registration on port `42699` tags them as Go, and Instana infers "messaging" from the OTel
+> `messaging.system=nats` spans. Their small internal Chi router (`/health`, `/metrics`) is
+> never the entry point for external traffic.
+>
+> `api-producer` is an HTTP-first service. Without `instana.TracingHandlerFunc`, `InitCollector`
+> still connects on `:42699` for process metrics, but no native `g.http` entry span is ever
+> emitted — so Instana classifies the service as generic **HTTP** instead of **Go**.
+> Adding the instana wrapper at the outermost layer fixes the technology tag without affecting
+> the OTel trace propagation chain.
 
 ### NATS span propagation
 
-W3C `traceparent` is now propagated end-to-end across the NATS boundary:
+W3C `traceparent` is propagated end-to-end across the NATS boundary:
 
 - **Producer** ([`producer/rpc.go`](../../producer/rpc.go)) — injects `traceparent` into NATS
   message headers via `otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(hdr))`
@@ -131,14 +182,17 @@ to its service dependency graph — same arrows and latency charts as a native s
 
 ### What appears in traces
 
-| Span source | Span attributes | Where |
-|-------------|----------------|-------|
-| Traefik (ingress) | `http.method`, `http.route`, `http.url`, `http.status_code` | OTLP → agent :4317 |
-| api-producer HTTP handler | `http.method`, `http.route`, `http.status_code` | OTLP → agent :4317 |
-| NATS RPC request span | `messaging.system=nats`, `messaging.destination.name`, `rpc.duration_ms` | OTLP → agent :4317 |
+| Span source | Span attributes | Destination |
+|-------------|----------------|-------------|
+| Traefik (ingress) | `http.method`, `http.route`, `http.url`, `http.status_code` | OTLP/gRPC → agent `:4317` |
+| Nginx / frontend | `http.method`, `http.route`, `http.status_code` | OTLP/gRPC → agent `:4317` (cluster-DNS) |
+| Kong (API gateway) | `http.method`, `http.route`, `http.status_code` | OTLP/HTTP → agent `:4318` |
+| api-producer HTTP handler | `http.method`, `http.route`, `http.status_code` | OTLP/gRPC → agent `:4317` |
+| notification-service WS upgrade | `http.method=/ws`, `http.status_code=101` | OTLP/gRPC → agent `:4317` |
+| NATS RPC request span | `messaging.system=nats`, `messaging.destination.name`, `rpc.duration_ms` | OTLP/gRPC → agent `:4317` |
 | NATS RPC roundtrip duration | via `rpc_roundtrip_seconds` Prometheus histogram | Prometheus only |
-| PostgreSQL queries | via `pg_stat_statements` (agent sensor) | Agent DB polling |
-| Redis commands | via Redis sensor INFO | Agent sensor polling |
+| PostgreSQL queries | `db.type=postgresql`, `db.statement` via `instapgx` | go-sensor → agent `:42699` |
+| Redis commands | `db.type=redis`, `db.statement` via `instaredis` | go-sensor → agent `:42699` |
 
 ---
 
@@ -157,8 +211,10 @@ com.instana.tracing:
 ```
 
 Traefik injects `traceparent`/`tracestate` on inbound requests (via OTLP tracing configured in
-the `HelmChartConfig` — `--tracing.instana` was removed in Traefik v3). The `api-producer`
-extracts these headers via `otelhttp.NewHandler` and propagates the trace context downstream.
+the `HelmChartConfig` — `--tracing.instana` was removed in Traefik v3). Kong propagates the
+same headers downstream via its OTel plugin (`propagation.default_format: w3c`). The
+`api-producer` and `notification-service` both extract these headers via `otelhttp.NewHandler`
+and propagate the trace context further downstream.
 
 ---
 
@@ -177,7 +233,7 @@ with OTel, others with Instana tracer) is supported.
 
 ## Go Collector vs OTel SDK — Two Approaches
 
-IBM Instana provides two distinct Go instrumentation paths. banking-demo uses only the second:
+IBM Instana provides two distinct Go instrumentation paths. banking-demo uses **both**:
 
 | | Instana Go Collector (`go-sensor`) | OTel SDK (`go.opentelemetry.io/otel`) |
 |---|---|---|
@@ -187,30 +243,16 @@ IBM Instana provides two distinct Go instrumentation paths. banking-demo uses on
 | Go runtime metrics | ✔ Free: GC pause, goroutines, heap, CPU | ✘ (use Prometheus `process_*` metrics) |
 | AutoProfile™ | ✔ Continuous CPU/memory profiling | ✘ |
 | W3C TraceContext | ✔ Propagates | ✔ Propagates |
-| NATS tracing | ✘ Not supported in Go | ✔ W3C header propagation (producer inject + consumer extract) |
-| Used by banking-demo | ✘ | ✔ (via `internal/tracing`) |
+| Native PostgreSQL DB spans | ✔ via `instapgx` | ✘ |
+| Native Redis DB spans | ✔ via `instaredis` | ✘ |
+| NATS tracing | ✘ No native module | ✔ W3C header propagation (producer inject + consumer extract) |
+| Used by banking-demo | ✔ (`internal/tracing.Init()`) | ✔ (`internal/tracing.Init()`) |
 
-### Why banking-demo chose the OTel SDK
+Both are initialised together inside the same `tracing.Init()` call. OTel handles distributed
+trace export (OTLP → agent `:4317`); the go-sensor connects in parallel to the agent on port
+`:42699` for Go process metrics, health signatures, AutoProfile™, and native DB spans.
 
-The OTel SDK is vendor-neutral — the same instrumentation works with Instana, Jaeger,
-or any OTLP backend. `internal/tracing.Init()` is 40 lines and switches backends by
-changing `OTEL_EXPORTER_OTLP_ENDPOINT`. The Go Collector requires `instana.InitSensor()`
-and returns Instana-specific span types.
-
-### Adding Go runtime metrics (optional)
-
-To get free Go runtime metrics (goroutine count, GC pauses, heap) in Instana without
-switching to the Go Collector, expose them via Prometheus and scrape with the agent:
-
-```go
-import "github.com/prometheus/client_golang/prometheus/promhttp"
-
-// In main.go — expose /metrics on a sidecar port (e.g. :9090)
-http.Handle("/metrics", promhttp.Handler())
-```
-
-The agent picks up `process_*` and `go_*` Prometheus metrics automatically if the
-process exposes a Prometheus endpoint.
+See [`14-go-sensor.md`](./14-go-sensor.md) for the full go-sensor integration reference.
 
 ---
 
@@ -243,22 +285,32 @@ helm upgrade banking-demo ./helm -n banking --reuse-values \
 
 1. **Instana UI → Services** — each banking service appears after first traces
 2. **Instana UI → Analytics → Calls** — filter by `service.name = api-producer` to see spans
-3. **Instana UI → Infrastructure → EC2 node** — shows OTel metrics from services
+3. **Instana UI → Infrastructure → Kubernetes** — k3s cluster with all pods
 
 ### Troubleshooting
 
 ```bash
-# Check agent is listening on OTLP ports
-sudo ss -tlnp | grep -E '4317|4318'
+# Check agent pod is running
+kubectl -n instana-agent get pods
+# Expected: instana-agent-<hash> 1/1 Running   k8sensor-<hash> 1/1 Running
 
-# Check agent accepted spans
-sudo grep -i "opentelemetry\|otlp" /opt/instana/agent/log/agent.log | tail -20
+# Check agent is listening on OTLP ports inside the DaemonSet pod
+kubectl -n instana-agent exec ds/instana-agent -- sh -c 'ss -tlnp | grep -E "4317|4318"'
 
-# Verify pod has the OTLP endpoint set correctly
-kubectl -n banking exec deploy/auth-service -- env | grep -E 'NODE_IP|OTEL'
+# Check agent logs for OTLP span ingestion
+kubectl -n instana-agent logs ds/instana-agent --tail=50 | grep -i "opentelemetry\|otlp"
+
+# Verify a Go pod has the correct endpoint
+kubectl -n banking exec deploy/auth-service -- env | grep -E 'NODE_IP|OTEL|INSTANA'
 # Expected:
 # NODE_IP=10.0.x.x
 # OTEL_EXPORTER_OTLP_ENDPOINT=http://10.0.x.x:4317
 # OTEL_SERVICE_NAME=auth-service
 # OTEL_RESOURCE_ATTRIBUTES=service.namespace=banking-demo
+# INSTANA_AGENT_HOST=10.0.x.x
+
+# Verify the agent Service is reachable from a pod (cluster-DNS path)
+kubectl -n banking exec deploy/auth-service -- \
+  sh -c 'nc -zv instana-agent.instana-agent.svc.cluster.local 4317 2>&1'
+# Expected: open / succeeded
 ```

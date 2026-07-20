@@ -1,4 +1,4 @@
-# Instana Agent configuration — banking-demo golang branch (Go/NATS on k3s)
+# Instana Agent configuration — banking-demo (Go/NATS on k3s)
 #
 # Delivery: Git-based configuration management.
 # The Instana DaemonSet agent pulls this file from the repo on every startup
@@ -55,8 +55,8 @@ com.instana.tags:
 #   - Uncomment kubeconfig and point it to the kubeconfig file on disk:
 #     kubeconfig: /etc/rancher/k3s/k3s.yaml
 # ---------------------------------------------------------------------------
-com.instana.plugin.kubernetes:
-  enabled: true
+# com.instana.plugin.kubernetes:
+  # enabled: true
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
@@ -135,18 +135,21 @@ com.instana.plugin.nginx:
 # ---------------------------------------------------------------------------
 # PostgreSQL monitoring
 #
-# The Helm DaemonSet agent runs as a pod inside the cluster and CAN reach
-# postgres.banking.svc.cluster.local:5432 directly via cluster DNS.
+# Schema: https://www.ibm.com/docs/en/instana-observability/current?topic=technologies-monitoring-postgresql
+# The sensor is auto-deployed after the agent starts and auto-discovers the
+# postgres process via /proc scanning. Credentials below supply authentication
+# for the sensor to query pg_stat_* views.
 #
-# Requires track_counts, track_activities, track_io_timing = on in postgresql.conf.
-# These are set via the postgres-init-configmap (helm/templates/).
+# poll_rate: seconds between metric collections (default 1 s).
+# database: used for authentication only; leave empty to default to 'user'.
+# Requires track_counts, track_activities, track_io_timing = on in
+# postgresql.conf — set via the postgres-init-configmap (helm/templates/).
 # ---------------------------------------------------------------------------
 com.instana.plugin.postgresql:
-  user: banking
-  password: bankingpass
-  database: banking
-  host: postgres.banking.svc.cluster.local
-  port: 5432
+  user: 'banking'
+  password: 'bankingpass'
+  database: 'banking'
+  poll_rate: 10
 
 # ---------------------------------------------------------------------------
 # Redis monitoring
@@ -173,21 +176,32 @@ com.instana.plugin.redis:
 # ---------------------------------------------------------------------------
 # Kong API Gateway monitoring
 #
-# Kong admin API is bound to 127.0.0.1:8001 inside the container (loopback).
-# The Instana agent pod cannot reach it via ClusterIP or DNS because Kong's
-# Kubernetes Service only exposes the proxy port (8000), not the admin port.
-# Leave commented out until a dedicated admin Service/NodePort is added.
+# Schema: https://www.ibm.com/docs/en/instana-observability/current?topic=technologies-monitoring-kong-api-gateway
 #
-# com.instana.plugin.kong:
-#   enabled: true
-#   dataset_size: 10
-#   status_code_group: '2xx,3xx,4xx,5xx'
-#   remote:
-#     - host: '127.0.0.1'
-#       port: '32001'            # NodePort for admin — add to helm/templates/kong.yaml first
-#       availabilityZone: 'banking-dung-ec2'
-#       poll_rate: 30
-#       protocol: 'http'
+# Remote monitoring: agent polls Kong's Admin API.
+#   host: kong ClusterIP Service DNS name (reachable from any namespace).
+#   port: 8001 — Kong plain-HTTP admin port (KONG_ADMIN_LISTEN = 0.0.0.0:8001).
+#   protocol: 'http' — Kong is not TLS-terminated on the admin interface here.
+#   poll_rate: minimum 30 s per IBM docs.
+#
+# KONG_ADMIN_LISTEN was changed from 127.0.0.1:8001 → 0.0.0.0:8001 in
+# helm/values.yaml so the agent pod can reach the admin API via Service DNS.
+# Port 8001 is added to the kong ClusterIP Service (helm/templates/kong.yaml).
+# It is NOT exposed via hostPort — only reachable inside the cluster.
+#
+# disabled_metrics: omitted → all metrics enabled.
+# dataset_size: max rows per service/route table (default 10).
+# ---------------------------------------------------------------------------
+com.instana.plugin.kong:
+  enabled: true
+  dataset_size: 10
+  status_code_group: '2xx,3xx,4xx,5xx'
+  remote:
+    - host: 'kong.banking.svc.cluster.local'
+      port: '8001'
+      availabilityZone: 'banking-dung-ec2'
+      poll_rate: 30
+      protocol: 'http'
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
@@ -247,4 +261,3 @@ com.instana.secrets:
     # "key" intentionally removed: too broad — it redacted internal agent
     # fields (INSTANA_AGENT_KEY etc.). Sensitive values are covered by the
     # explicit DATABASE_URL / REDIS_URL / NATS_URL entries above.
-
