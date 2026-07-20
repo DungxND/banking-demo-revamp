@@ -4,14 +4,13 @@ kind: StatefulSet
 metadata:
   name: {{ include "banking-demo.postgres.fullname" . }}
   namespace: {{ .Release.Namespace }}
-  {{- if and .Values.postgres.hook.preInstall .Values.postgres.hook.preUpgrade }}
-  annotations:
-    helm.sh/hook: pre-install,pre-upgrade
-    helm.sh/hook-weight: {{ .Values.postgres.hook.weight | quote }}
-  {{- end }}
   labels:
     app: {{ include "banking-demo.postgres.fullname" . }}
     {{- include "banking-demo.postgres.labels" . | nindent 4 }}
+    {{- include "banking-demo.labels" . | nindent 4 }}
+  annotations:
+    meta.helm.sh/release-name: {{ .Release.Name }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace }}
 spec:
   serviceName: {{ include "banking-demo.postgres.fullname" . }}
   replicas: {{ .Values.postgres.replicas }}
@@ -98,11 +97,6 @@ kind: Service
 metadata:
   name: {{ include "banking-demo.postgres.fullname" . }}
   namespace: {{ .Release.Namespace }}
-  {{- if and .Values.postgres.hook.preInstall .Values.postgres.hook.preUpgrade }}
-  annotations:
-    helm.sh/hook: pre-install,pre-upgrade
-    helm.sh/hook-weight: {{ .Values.postgres.hook.weight | quote }}
-  {{- end }}
   labels:
     app: {{ include "banking-demo.postgres.fullname" . }}
     {{- include "banking-demo.postgres.labels" . | nindent 4 }}

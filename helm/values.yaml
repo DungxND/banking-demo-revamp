@@ -51,10 +51,6 @@ postgres:
     port: 5432
     portName: postgres
     clusterIP: ""
-  hook:
-    preInstall: true
-    preUpgrade: true
-    weight: "-5"
   secretRef:
     name: ""   # empty → uses banking-demo.secretName helper
     keys:
@@ -95,10 +91,6 @@ redis:
     port: 6379
     portName: redis
     clusterIP: ""
-  hook:
-    preInstall: true
-    preUpgrade: true
-    weight: "-5"
   storage:
     volumeName: redis-data
     mountPath: /data
@@ -190,7 +182,11 @@ kong:
     KONG_ADMIN_ACCESS_LOG: "/dev/stdout"
     KONG_PROXY_ERROR_LOG: "/dev/stderr"
     KONG_ADMIN_ERROR_LOG: "/dev/stderr"
-    KONG_ADMIN_LISTEN: "127.0.0.1:8001"
+    # Bind admin API on all interfaces so the Instana agent pod (running in
+    # instana-agent namespace) can reach it via cluster DNS / ClusterIP Service.
+    # The admin port (8001) is NOT exposed via hostPort and is only reachable
+    # from within the cluster — no external exposure risk.
+    KONG_ADMIN_LISTEN: "0.0.0.0:8001"
     KONG_PROXY_LISTEN: "0.0.0.0:8000"
     KONG_NGINX_WORKER_PROCESSES: "1"
     KONG_TRACING_INSTRUMENTATIONS: all

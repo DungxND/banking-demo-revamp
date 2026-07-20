@@ -182,4 +182,10 @@ spec:
     - name: {{ .Values.kong.proxyPortName }}
       port: {{ .Values.kong.proxyPort }}
       targetPort: {{ .Values.kong.proxyPort }}
+    # Admin port — exposed only within the cluster (ClusterIP).
+    # Required for the Instana Kong sensor to poll admin API metrics.
+    # KONG_ADMIN_LISTEN must be 0.0.0.0:8001 (not 127.0.0.1) for this to work.
+    - name: {{ .Values.kong.adminPortName }}
+      port: {{ .Values.kong.adminPort }}
+      targetPort: {{ .Values.kong.adminPort }}
 {{- end }}
