@@ -17,6 +17,7 @@ import (
 	"banking-demo/internal/metrics"
 	"banking-demo/internal/service"
 	"banking-demo/internal/tracing"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 const (
@@ -75,7 +76,7 @@ func run(ctx context.Context, cfg config) error {
 
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           router,
+		Handler:           otelhttp.NewHandler(router, serviceName),
 		ReadHeaderTimeout: 10 * time.Second,
 		WriteTimeout:      0, // WebSocket connections are long-lived; no write deadline.
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -103,7 +104,16 @@ func wsHandler(redisClient *iredis.Client, logger *slog.Logger) http.HandlerFunc
 					disconnect()
 					return
 				}
-				payload := map[string]string{"message": msg}
+				// msg is the raw JSON published to the notify channel (e.g. TransferCompleted).
+				// Deliver it as a structured JSON object by unmarshaling into a raw message
+				// so the WS frame is {"event":{...}} rather than {"event":"{\\"...\\"}"}
+				// (the latter double-encodes the payload as an escaped string).
+				var raw json.RawMessage
+				if err := json.Unmarshal([]byte(msg), &raw); err != nil {
+					// Malformed publish payload — forward as string so nothing is silently dropped.
+					raw, _ = json.Marshal(msg)
+				}
+				payload := map[string]json.RawMessage{"event": raw}
 				if writeErr := wsjson.Write(wsCtx, conn, payload); writeErr != nil {
 					if !errors.Is(writeErr, context.Canceled) {
 						logger.Info("ws_write_failed", "user_id", userID, "error", writeErr.Error())

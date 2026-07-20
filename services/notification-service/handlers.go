@@ -70,7 +70,7 @@ func handleAck(bdb bob.DB, logger *slog.Logger) internnats.Handler {
 		res, err := bob.Exec(ctx, bdb,
 			psql.Update(
 				um.Table("notifications"),
-				um.Set(psql.Quote("is_read"), psql.Arg(true)),
+				um.SetCol("is_read").ToArg(true),
 				um.Where(psql.Quote("id").EQ(psql.Arg(p.ID))),
 				um.Where(psql.Quote("user_id").EQ(psql.Arg(userID))),
 			),
