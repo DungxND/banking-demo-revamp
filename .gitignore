@@ -18,6 +18,7 @@ infra/ansible/inventories/vps/group_vars/all.yml
 
 
 .playwright-mcp
+.bob
 
 # Go build outputs
 *.exe

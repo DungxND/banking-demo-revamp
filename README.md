@@ -268,7 +268,7 @@ flowchart LR
 ## Quick start — Docker Compose
 
 ```bash
-git clone https://github.com/DungxND/banking-demo
+git clone https://github.com/dungxnd/banking-demo
 cd banking-demo
 docker compose up --build
 ```
