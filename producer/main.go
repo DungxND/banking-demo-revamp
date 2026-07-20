@@ -15,9 +15,12 @@ import (
 	"github.com/caarlos0/env/v11"
 	"github.com/go-chi/chi/v5"
 	chicors "github.com/go-chi/cors"
+	instana "github.com/instana/go-sensor"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"golang.org/x/sync/errgroup"
+
+	"banking-demo/internal/tracing"
 )
 
 const serviceName = "api-producer"
@@ -105,9 +108,22 @@ func main() {
 	router.Get("/api/health/transfer", proxy("banking.transfer.health"))
 	router.Get("/api/health/notifications", proxy("banking.notification.health"))
 
+	// Wrap with instana.TracingHandlerFunc at the outermost layer so the
+	// go-sensor emits native g.http entry spans to the agent on port 42699.
+	// This is what makes Instana classify api-producer as technology=Go rather
+	// than a generic HTTP service — the go-sensor's native span carries the
+	// technology tag, whereas OTel HTTP spans alone only show up as "HTTP".
+	// otelhttp sits inside: instana wrapper → otelhttp → chi router.
+	// Order matters: instana extracts W3C traceparent first, then otelhttp
+	// continues the same trace context downstream.
+	instanaHandler := instana.TracingHandlerFunc(
+		tracing.Collector(),
+		"/",
+		otelhttp.NewHandler(router, serviceName).ServeHTTP,
+	)
 	server := &http.Server{
 		Addr:              serverAddr(cfg.Port),
-		Handler:           otelhttp.NewHandler(router, serviceName),
+		Handler:           instanaHandler,
 		ReadHeaderTimeout: 10 * time.Second,
 		WriteTimeout:      cfg.ResponseTimeout + 15*time.Second, // must exceed RPC timeout
 	}

@@ -111,11 +111,13 @@ func injectPathParam(paramName, queryKey string, next http.HandlerFunc) http.Han
 }
 
 // parsePayload extracts the request body for mutation methods (POST/PUT/PATCH) and
-// query parameters for GET requests, normalised to a JSON-serialisable value.
+// query parameters for GET/PATCH requests, normalised to a JSON-serialisable value.
 // An empty or missing body returns an empty map rather than an error.
+// For PATCH, query params (injected by injectPathParam) are merged into the body map
+// so that path-param-only routes like PATCH /resource/{id}/action work correctly.
 func parsePayload(r *http.Request) (any, error) {
 	switch r.Method {
-	case http.MethodPost, http.MethodPut, http.MethodPatch:
+	case http.MethodPost, http.MethodPut:
 		if r.Body == nil {
 			return map[string]any{}, nil
 		}
@@ -133,6 +135,28 @@ func parsePayload(r *http.Request) (any, error) {
 		}
 		return payload, nil
 
+	case http.MethodPatch:
+		// Start with query params (populated by injectPathParam for path-param routes).
+		// Parse numeric strings as json.Number so downstream handlers can unmarshal
+		// them into int64/float64 fields without type mismatch errors.
+		merged := map[string]any{}
+		for key, values := range r.URL.Query() {
+			if len(values) > 0 {
+				merged[key] = queryValue(values[0])
+			}
+		}
+		// Merge body on top if present — body keys win over query params.
+		if r.Body != nil {
+			defer r.Body.Close()
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
+				for k, v := range body {
+					merged[k] = v
+				}
+			}
+		}
+		return merged, nil
+
 	case http.MethodGet:
 		query := r.URL.Query() // parse once
 		payload := make(map[string]string, len(query))
@@ -147,6 +171,22 @@ func parsePayload(r *http.Request) (any, error) {
 		return map[string]any{}, nil
 	}
 }
+
+
+// queryValue converts a URL query-string value to its natural JSON type.
+// Numeric strings become int64 or float64 so downstream handlers can unmarshal
+// them into int64/float64 struct fields without a type-mismatch error.
+// All other values are returned as plain strings.
+func queryValue(s string) any {
+	if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return n
+	}
+	if n, err := strconv.ParseFloat(s, 64); err == nil {
+		return n
+	}
+	return s
+}
+
 
 // writeJSON marshals payload to JSON and writes it as the HTTP response.
 // Falls back to a 500 plain-text error if marshalling fails.

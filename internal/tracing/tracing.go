@@ -90,6 +90,8 @@ func Init(serviceName, otlpEndpoint string, logger *slog.Logger) func(context.Co
 
 	res, err := resource.New(
 		context.Background(),
+		resource.WithTelemetrySDK(),  // adds telemetry.sdk.language=go — required for Instana Go tech detection on OTel/HTTP services
+		resource.WithFromEnv(),       // reads OTEL_RESOURCE_ATTRIBUTES (e.g. service.namespace=banking-demo) and OTEL_SERVICE_NAME
 		resource.WithAttributes(semconv.ServiceName(serviceName)),
 	)
 	if err != nil {
