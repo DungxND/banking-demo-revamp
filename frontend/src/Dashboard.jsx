@@ -69,10 +69,24 @@ export default function Dashboard({ onLogout, onGoAdmin }) {
     ws.onopen    = () => setWsStatus("connected");
     ws.onclose   = () => setWsStatus("disconnected");
     ws.onerror   = () => setWsStatus("error");
-    ws.onmessage = () => {
+    ws.onmessage = (e) => {
       // WS push signals a new transfer event; re-fetch the canonical
       // notification list from the REST API so the UI always shows
       // DB-backed items with the correct shape (id, message, is_read, created_at).
+      // The server now sends {"event": {...TransferCompleted...}} — parse it to
+      // optimistically update the balance before the REST refetch completes.
+      try {
+        const { event } = JSON.parse(e.data);
+        if (event?.sender_id || event?.receiver_id) {
+          setMe((prev) => {
+            if (!prev) return prev;
+            const myId = prev.id;
+            if (event.sender_id === myId)   return { ...prev, balance: event.sender_balance };
+            if (event.receiver_id === myId) return { ...prev, balance: event.receiver_balance };
+            return prev;
+          });
+        }
+      } catch {}
       load().catch(console.error);
     };
     return () => { try { ws.close(); } catch {} };
