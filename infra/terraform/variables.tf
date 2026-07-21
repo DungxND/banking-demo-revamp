@@ -58,7 +58,7 @@ variable "allowed_ssh_cidrs" {
 }
 
 variable "allowed_app_cidrs" {
-  description = "List of CIDR blocks allowed to reach application ports (80 Kong proxy, 6443 k3s API)"
+  description = "List of CIDR blocks allowed to reach application ports (30080 Kong NodePort, 6443 k3s API)"
   type        = list(string)
   default     = ["0.0.0.0/0"]
 }

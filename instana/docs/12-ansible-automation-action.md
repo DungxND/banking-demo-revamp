@@ -38,7 +38,7 @@ runtime remediation today. The playbooks live in [`infra/ansible/`](../../infra/
 | `roles/app` | git clone `golang` branch → `helm upgrade --install banking-demo` → health check |
 
 The `app` role runs `helm upgrade --install` with all chart values files, waits up to 5 min
-for pods to be ready, then polls `http://localhost:80` (Kong hostPort) until HTTP 200/404.
+for pods to be ready, then polls `http://localhost:30080` (Kong NodePort) until HTTP 200/404.
 
 **Target scenario for Ansible Actions:** once the Ansible Automation Controller is running
 (AWX or AAP), the job templates below become natural Instana Automation Actions:

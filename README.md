@@ -150,7 +150,7 @@ helm upgrade --install banking ./helm \
   --wait --timeout 300s
 ```
 
-Kong binds directly to **port 80 on the node** — no Ingress or cloud load balancer required on k3s/EC2. Once deployed, the app is available at `http://<your-node-ip>/`.
+Kong uses **NodePort 30080** — every node forwards port 30080 to Kong. No cloud load balancer required. The app is available at `http://<any-node-ip>:30080/`.
 
 > **Helm 4 users:** `--atomic` is now `--rollback-on-failure`. Fresh installs default to Server-Side Apply. If you installed with Helm 3 and are upgrading, add `--server-side=false`.
 
@@ -161,7 +161,7 @@ Kong binds directly to **port 80 on the node** — no Ingress or cloud load bala
 kubectl get pods -n banking
 
 # Send a test request
-curl -s http://<node-ip>/api/health
+curl -s http://<node-ip>:30080/api/health
 
 # Consumers print this when they've connected to NATS and are ready
 kubectl logs -n banking -l app=auth-service --tail=5 | grep nats_micro_service_started
@@ -196,9 +196,13 @@ helm upgrade banking ./helm -n banking --reuse-values \
   --set frontend.image.tag=sha-abc1234
 ```
 
+### NodePort access (vanilla k8s / bare-metal)
+
+Kong exposes port 30080 on every node via NodePort. Access the app at `http://<any-node-ip>:30080/`.
+
 ### Optional: Ingress for cloud clusters (EKS / GKE)
 
-On bare-metal/k3s, Kong serves on port 80 directly via `hostPort` — no Ingress needed.
+On bare-metal/k3s, Kong uses NodePort — no Ingress needed.
 For cloud clusters with a domain name, enable the Ingress resource:
 
 ```bash
@@ -207,7 +211,7 @@ helm upgrade banking ./helm -n banking --reuse-values \
   --set ingress.className=nginx \
   --set ingress.host=banking.example.com \
   --set kong.service.type=LoadBalancer \
-  --set kong.service.hostPort=null
+  --set kong.service.nodePort=null
 ```
 
 | Cluster type | `ingress.className` |

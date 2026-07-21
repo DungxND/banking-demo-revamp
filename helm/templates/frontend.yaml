@@ -30,6 +30,13 @@ spec:
       imagePullSecrets:
         {{- toYaml .Values.frontend.imagePullSecrets | nindent 8 }}
       {{- end }}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  {{- include "banking-demo.frontend.selectorLabels" . | nindent 18 }}
+              topologyKey: kubernetes.io/hostname
       containers:
         - name: frontend
           image: "{{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag }}"

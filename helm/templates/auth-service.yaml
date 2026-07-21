@@ -31,6 +31,13 @@ spec:
       imagePullSecrets:
         {{- toYaml $svc.imagePullSecrets | nindent 8 }}
       {{- end }}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  {{- include "banking-demo.auth-service.selectorLabels" . | nindent 18 }}
+              topologyKey: kubernetes.io/hostname
       initContainers:
         - name: wait-for-postgres
           image: alpine:3.23

@@ -72,6 +72,30 @@ data:
           {{- end }}
     {{- end }}
 
+    {{- /* Render Upstream entities for backends that define .upstream */}}
+    {{- $upstreamBackends := list }}
+    {{- range .Values.kong.backends }}
+    {{- if .upstream }}
+    {{- $upstreamBackends = append $upstreamBackends . }}
+    {{- end }}
+    {{- end }}
+    {{- if $upstreamBackends }}
+    upstreams:
+    {{- range $upstreamBackends }}
+      - name: {{ .upstream.name }}
+        algorithm: {{ .upstream.algorithm }}
+        {{- if .upstream.healthchecks }}
+        healthchecks:
+          {{- toYaml .upstream.healthchecks | nindent 10 }}
+        {{- end }}
+        targets:
+        {{- range .upstream.targets }}
+          - target: {{ .target | quote }}
+            weight: {{ default 100 .weight }}
+        {{- end }}
+    {{- end }}
+    {{- end }}
+
     {{- if .Values.kong.globalPlugins }}
     plugins:
     {{- range .Values.kong.globalPlugins }}
@@ -93,14 +117,8 @@ metadata:
     {{- include "banking-demo.kong.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.kong.replicas }}
-  # Recreate is required for hostPort workloads on single-node clusters.
-  # RollingUpdate would leave the old pod holding port 80 while the new pod
-  # tries to bind the same hostPort — the new pod stays Pending forever.
-  # rollingUpdate must be explicitly null — Kubernetes forbids it being present
-  # when type is Recreate, and SSA will reject the update otherwise.
   strategy:
-    type: {{ .Values.kong.updateStrategy | default "Recreate" }}
-    rollingUpdate: null
+    type: RollingUpdate
   selector:
     matchLabels:
       {{- include "banking-demo.kong.selectorLabels" . | nindent 6 }}
@@ -130,9 +148,6 @@ spec:
           ports:
             - containerPort: {{ .Values.kong.proxyPort }}
               name: {{ .Values.kong.proxyPortName }}
-              {{- if .Values.kong.service.hostPort }}
-              hostPort: {{ .Values.kong.service.hostPort }}
-              {{- end }}
             - containerPort: {{ .Values.kong.adminPort }}
               name: {{ .Values.kong.adminPortName }}
           volumeMounts:
@@ -163,9 +178,7 @@ spec:
           configMap:
             name: {{ include "banking-demo.kong.configMapName" . }}
 ---
-# Kong ClusterIP Service — used for intra-cluster communication only
-# (e.g. if an Ingress controller is placed in front of Kong).
-# External access on port 80 is handled by hostPort on the pod above.
+# Kong Service — NodePort for external access on every node.
 apiVersion: v1
 kind: Service
 metadata:
@@ -182,6 +195,9 @@ spec:
     - name: {{ .Values.kong.proxyPortName }}
       port: {{ .Values.kong.proxyPort }}
       targetPort: {{ .Values.kong.proxyPort }}
+      {{- if .Values.kong.service.nodePort }}
+      nodePort: {{ .Values.kong.service.nodePort }}
+      {{- end }}
     # Admin port — exposed only within the cluster (ClusterIP).
     # Required for the Instana Kong sensor to poll admin API metrics.
     # KONG_ADMIN_LISTEN must be 0.0.0.0:8001 (not 127.0.0.1) for this to work.

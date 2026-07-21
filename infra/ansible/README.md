@@ -56,7 +56,7 @@ Both files are git-ignored (see root `.gitignore`).
 |---|---|
 | `common` | apt upgrade, base packages, swap (2 GiB), sysctl tuning |
 | `k3s` | Installs k3s (single-node, Traefik disabled) + Helm binary; copies kubeconfig for `ubuntu` user |
-| `app` | Clones repo, runs `helm upgrade --install` from `helm/`, waits for Kong on port 80 |
+| `app` | Clones repo, runs `helm upgrade --install` from `helm/`, waits for Kong on port 30080 |
 
 ## Tags
 

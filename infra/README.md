@@ -75,7 +75,7 @@ This runs three roles in order:
 |---|---|
 | `common` | apt upgrade, base packages, 2 GiB swap, sysctl tuning |
 | `k3s` | Installs k3s (Traefik disabled) + Helm v4; copies kubeconfig for `ubuntu` user |
-| `app` | Clones the repo, runs `helm upgrade --install`, waits for Kong on port 80 |
+| `app` | Clones the repo, runs `helm upgrade --install`, waits for Kong on port 30080 |
 
 ---
 

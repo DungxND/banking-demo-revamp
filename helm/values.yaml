@@ -164,16 +164,13 @@ kong:
   adminPort: 8001
   adminPortName: admin
 
-  # k3s / bare-metal EC2 — no cloud LoadBalancer available.
-  # hostPort binds port 80 directly on the node NIC.
-  # Switch to LoadBalancer + remove hostPort when moving to EKS/GKE.
+  # NodePort exposes Kong on every node at port 30080.
+  # Works on any vanilla K8s / bare-metal cluster without a cloud LB.
   service:
-    type: ClusterIP
-    hostPort: 80
+    type: NodePort
+    nodePort: 30080
 
-  # Recreate is mandatory on single-node clusters with hostPort.
-  # RollingUpdate causes the new pod to stay Pending (port 80 conflict).
-  updateStrategy: Recreate
+  updateStrategy: RollingUpdate
 
   env:
     KONG_DATABASE: "off"
@@ -201,14 +198,50 @@ kong:
   # /api and /ws must appear before / (catch-all).
   backends:
     - name: api-producer
-      url: "http://api-producer:8080"
+      url: "http://api-producer-upstream:8080"
+      upstream:
+        name: api-producer-upstream
+        algorithm: round-robin
+        healthchecks:
+          active:
+            type: http
+            http_path: /health
+            timeout: 1
+            concurrency: 10
+            healthy:
+              interval: 30
+              successes: 2
+            unhealthy:
+              interval: 10
+              http_failures: 3
+        targets:
+          - target: api-producer:8080
+            weight: 100
       routes:
         - name: api-route
           paths: ["/api"]
           strip_path: false
 
     - name: notification-service
-      url: "http://notification-service:8004"
+      url: "http://notification-upstream:8004"
+      upstream:
+        name: notification-upstream
+        algorithm: least-connections
+        healthchecks:
+          active:
+            type: http
+            http_path: /health
+            timeout: 1
+            concurrency: 10
+            healthy:
+              interval: 30
+              successes: 2
+            unhealthy:
+              interval: 10
+              http_failures: 3
+        targets:
+          - target: notification-service:8004
+            weight: 100
       routes:
         - name: notification-ws-route
           paths: ["/ws"]
@@ -217,7 +250,25 @@ kong:
 
     # Frontend last — broadest match, lowest specificity.
     - name: frontend
-      url: "http://frontend:80"
+      url: "http://frontend-upstream:80"
+      upstream:
+        name: frontend-upstream
+        algorithm: round-robin
+        healthchecks:
+          active:
+            type: http
+            http_path: /
+            timeout: 1
+            concurrency: 10
+            healthy:
+              interval: 30
+              successes: 2
+            unhealthy:
+              interval: 10
+              http_failures: 3
+        targets:
+          - target: frontend:80
+            weight: 100
       routes:
         - name: frontend-route
           paths: ["/"]
@@ -393,7 +444,7 @@ auth-service:
 
 account-service:
   enabled: true
-  replicas: 1
+  replicas: 3
   image:
     repository: ghcr.io/dungxnd/banking-demo-revamp/account-service
     tag: latest
@@ -477,7 +528,7 @@ transfer-service:
 
 notification-service:
   enabled: true
-  replicas: 1
+  replicas: 3
   image:
     repository: ghcr.io/dungxnd/banking-demo-revamp/notification-service
     tag: latest
