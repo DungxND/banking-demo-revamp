@@ -4,11 +4,14 @@ description: Banking Demo — Caddy (edge) → Kong (ClusterIP) → API Producer
 type: application
 version: 1.0.0
 appVersion: "10"
+icon: https://raw.githubusercontent.com/cncf/artwork/main/projects/kubernetes/icon/color/kubernetes-icon-color.png
 keywords:
   - banking
   - microservices
   - kong
   - nats
   - redis
-# Helm 4 defaults to Server-Side Apply (SSA) on fresh installs; SSA is GA since k8s 1.25.
+maintainers:
+  - name: Banking DevOps Team
+    email: devops@banking-demo.local
 kubeVersion: ">=1.25"

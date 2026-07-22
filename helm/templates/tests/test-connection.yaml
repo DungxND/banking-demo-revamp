@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "banking-demo.caddy.fullname" . }}-test-connection"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "banking-demo.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  containers:
+    - name: test-caddy-health
+      image: busybox:1.37
+      command: ['wget']
+      args: ['-q', '-O-', 'http://caddy.{{ .Release.Namespace }}.svc.cluster.local:80/caddy-health']
+  restartPolicy: Never

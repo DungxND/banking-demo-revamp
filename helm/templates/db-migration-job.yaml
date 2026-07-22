@@ -1,4 +1,0 @@
-{{- /*
-  DB migration job removed: schema migrations (phone, account_number, indexes, etc.)
-  are integrated directly into mainstream PostgreSQL init scripts (postgres-init-configmap.yaml).
-*/ -}}
