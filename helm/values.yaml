@@ -85,21 +85,6 @@ sharedEnv:
 networkPolicies:
   enabled: true                    # false on clusters without CNI policy support
 
-# ── DB Migration Job ─────────────────────────────────────────
-dbMigration:
-  enabled: false
-  image: postgres:18
-  hookWeight: "-5"
-  backoffLimit: 3
-  activeDeadlineSeconds: 120
-  resources:
-    requests:
-      memory: "64Mi"
-      cpu: "10m"
-    limits:
-      memory: "256Mi"
-      cpu: "200m"
-
 # ── PostgreSQL ───────────────────────────────────────────────
 postgres:
   enabled: true

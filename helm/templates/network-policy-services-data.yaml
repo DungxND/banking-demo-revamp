@@ -30,4 +30,5 @@ spec:
                   - frontend
                   - api-producer
                   - kong
+                  - nats-exporter
 {{- end }}
