@@ -21,7 +21,7 @@ spec:
     metadata:
       labels:
         app: {{ include "banking-demo.redis.fullname" . }}
-        {{- include "banking-demo.redis.selectorLabels" . | nindent 8 }}
+        {{- include "banking-demo.redis.labels" . | nindent 8 }}
     spec:
       {{- with .Values.redis.securityContext.pod }}
       securityContext:

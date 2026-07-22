@@ -20,7 +20,7 @@ spec:
         prometheus.io/port: {{ .Values.frontend.service.port | quote }}
       labels:
         app: {{ include "banking-demo.frontend.fullname" . }}
-        {{- include "banking-demo.frontend.selectorLabels" . | nindent 8 }}
+        {{- include "banking-demo.frontend.labels" . | nindent 8 }}
     spec:
       {{- with .Values.frontend.securityContext.pod }}
       securityContext:

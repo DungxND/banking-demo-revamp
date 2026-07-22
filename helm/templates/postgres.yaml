@@ -21,7 +21,7 @@ spec:
     metadata:
       labels:
         app: {{ include "banking-demo.postgres.fullname" . }}
-        {{- include "banking-demo.postgres.selectorLabels" . | nindent 8 }}
+        {{- include "banking-demo.postgres.labels" . | nindent 8 }}
     spec:
       {{- with .Values.postgres.securityContext.pod }}
       securityContext:

@@ -126,7 +126,7 @@ spec:
     metadata:
       labels:
         app: {{ include "banking-demo.kong.fullname" . }}
-        {{- include "banking-demo.kong.selectorLabels" . | nindent 8 }}
+        {{- include "banking-demo.kong.labels" . | nindent 8 }}
     spec:
       {{- with .Values.kong.securityContext.pod }}
       securityContext:

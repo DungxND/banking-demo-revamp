@@ -21,7 +21,7 @@ spec:
         prometheus.io/port: {{ $svc.service.port | quote }}
       labels:
         app: {{ include "banking-demo.transfer-service.fullname" . }}
-        {{- include "banking-demo.transfer-service.selectorLabels" . | nindent 8 }}
+        {{- include "banking-demo.transfer-service.labels" . | nindent 8 }}
     spec:
       {{- with $svc.securityContext.pod }}
       securityContext:

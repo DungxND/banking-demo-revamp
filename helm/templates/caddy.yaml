@@ -61,7 +61,7 @@ spec:
     metadata:
       labels:
         app: {{ include "banking-demo.caddy.fullname" . }}
-        {{- include "banking-demo.caddy.selectorLabels" . | nindent 8 }}
+        {{- include "banking-demo.caddy.labels" . | nindent 8 }}
     spec:
       hostNetwork: {{ .Values.caddy.hostNetwork }}
       dnsPolicy: ClusterFirstWithHostNet

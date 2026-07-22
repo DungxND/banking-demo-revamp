@@ -16,7 +16,7 @@ spec:
     metadata:
       labels:
         app: {{ include "banking-demo.nats.fullname" . }}
-        {{- include "banking-demo.nats.selectorLabels" . | nindent 8 }}
+        {{- include "banking-demo.nats.labels" . | nindent 8 }}
     spec:
       {{- if .Values.nats.jetstream.enabled }}
       volumes:

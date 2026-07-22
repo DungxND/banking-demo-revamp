@@ -21,7 +21,7 @@ spec:
         prometheus.io/port: {{ $svc.service.port | quote }}
       labels:
         app: {{ include "banking-demo.notification-service.fullname" . }}
-        {{- include "banking-demo.notification-service.selectorLabels" . | nindent 8 }}
+        {{- include "banking-demo.notification-service.labels" . | nindent 8 }}
     spec:
       {{- with $svc.securityContext.pod }}
       securityContext:

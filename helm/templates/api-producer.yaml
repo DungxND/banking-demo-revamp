@@ -21,7 +21,7 @@ spec:
         prometheus.io/port: {{ $svc.service.port | quote }}
       labels:
         app: {{ include "banking-demo.api-producer.fullname" . }}
-        {{- include "banking-demo.api-producer.selectorLabels" . | nindent 8 }}
+        {{- include "banking-demo.api-producer.labels" . | nindent 8 }}
     spec:
       {{- with $svc.securityContext.pod }}
       securityContext:
