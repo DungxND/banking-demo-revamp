@@ -12,26 +12,35 @@ data:
     {{- if and .Values.caddy.tls.enabled .Values.caddy.tls.domain }}
     # ═══ TLS enabled: HTTPS via Let's Encrypt HTTP-01 challenge ═══
     {{ .Values.caddy.tls.domain }} {
-        tls
-        reverse_proxy kong.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.kong.proxyPort }} {
-            lb_policy round_robin
-            lb_try_duration 5s
+        handle /caddy-health {
+            respond "OK" 200
         }
-        header {
-            Strict-Transport-Security "max-age=31536000; includeSubDomains"
-            X-Content-Type-Options "nosniff"
+        handle {
+            reverse_proxy kong.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.kong.proxyPort }} {
+                lb_policy round_robin
+                lb_try_duration 5s
+            }
+            header {
+                Strict-Transport-Security "max-age=31536000; includeSubDomains"
+                X-Content-Type-Options "nosniff"
+            }
         }
     }
     {{- end }}
 
     # ═══ HTTP on raw IP — always active ═══
     :80 {
-        reverse_proxy kong.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.kong.proxyPort }} {
-            lb_policy round_robin
-            lb_try_duration 5s
+        handle /caddy-health {
+            respond "OK" 200
         }
-        header {
-            X-Content-Type-Options "nosniff"
+        handle {
+            reverse_proxy kong.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.kong.proxyPort }} {
+                lb_policy round_robin
+                lb_try_duration 5s
+            }
+            header {
+                X-Content-Type-Options "nosniff"
+            }
         }
     }
 ---
@@ -90,13 +99,15 @@ spec:
           resources:
             {{- toYaml .Values.caddy.resources | nindent 12 }}
           livenessProbe:
-            httpGet: { path: /, port: 80 }
+            httpGet: { path: /caddy-health, port: 80 }
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 3
           readinessProbe:
-            httpGet: { path: /, port: 80 }
+            httpGet: { path: /caddy-health, port: 80 }
             initialDelaySeconds: 3
             periodSeconds: 5
+            timeoutSeconds: 3
       volumes:
         - name: caddyfile
           configMap:
