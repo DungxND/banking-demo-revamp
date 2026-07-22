@@ -239,7 +239,7 @@ kong:
   adminPortName: admin
 
   # ClusterIP — Caddy is the sole entry point on :80/:443 via hostNetwork.
-  # Caddy proxies → kong-proxy.banking.svc.cluster.local:8000.
+  # Caddy proxies → kong-proxy.banking-demo.svc.cluster.local:8000.
   # No NodePort, no external exposure of Kong.
   service:
     type: ClusterIP

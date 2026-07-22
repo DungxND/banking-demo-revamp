@@ -16,7 +16,7 @@ data:
             respond "OK" 200
         }
         handle {
-            reverse_proxy kong.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.kong.proxyPort }} {
+            reverse_proxy {{ include "banking-demo.kong.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.kong.proxyPort }} {
                 lb_policy round_robin
                 lb_try_duration 5s
             }
@@ -34,7 +34,7 @@ data:
             respond "OK" 200
         }
         handle {
-            reverse_proxy kong.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.kong.proxyPort }} {
+            reverse_proxy {{ include "banking-demo.kong.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.kong.proxyPort }} {
                 lb_policy round_robin
                 lb_try_duration 5s
             }

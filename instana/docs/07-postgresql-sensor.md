@@ -12,12 +12,12 @@ It connects to PostgreSQL using the credentials in `configuration.yaml` and quer
 
 ```
 DaemonSet agent pod (instana-agent namespace)
-  └─ JDBC connect → postgres.banking.svc.cluster.local:5432
+  └─ JDBC connect → postgres.banking-demo.svc.cluster.local:5432
        └─ SELECT from pg_stat_activity, pg_stat_user_tables,
                       pg_stat_bgwriter, pg_locks, pg_database
 ```
 
-The DaemonSet agent reaches `postgres.banking.svc.cluster.local` via cluster-internal DNS —
+The DaemonSet agent reaches `postgres.banking-demo.svc.cluster.local` via cluster-internal DNS —
 no NodePort is needed.
 
 ---

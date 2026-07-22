@@ -22,9 +22,9 @@ instana-agent namespace
   │     ├── OTLP receiver  :4317 (gRPC) / :4318 (HTTP)
   │     ├── go-sensor receiver  :42699
   │     ├── Prometheus scrape (pod annotations, nats-exporter)
-  │     ├── PostgreSQL sensor  → postgres.banking.svc.cluster.local:5432
+  │     ├── PostgreSQL sensor  → postgres.banking-demo.svc.cluster.local:5432
   │     ├── Redis sensor       → auto-discovered via containerd
-  │     └── Kong sensor        → kong.banking.svc.cluster.local:8001
+  │     └── Kong sensor        → kong.banking-demo.svc.cluster.local:8001
   └── Deployment: k8sensor       (dedicated Kubernetes API watcher)
         └── reports pods / services / namespaces / workloads to Instana backend
 ```
@@ -156,7 +156,7 @@ Kong's Admin API from within the cluster:
 
 ```
 DaemonSet agent pod
-  └─ HTTP poll every 30 s → kong.banking.svc.cluster.local:8001 (Admin API)
+  └─ HTTP poll every 30 s → kong.banking-demo.svc.cluster.local:8001 (Admin API)
 ```
 
 `KONG_ADMIN_LISTEN=0.0.0.0:8001` is set in `helm/values.yaml` so the admin port is

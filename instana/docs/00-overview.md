@@ -374,7 +374,7 @@ kubectl logs -n banking deploy/transfer-service
 ### Agent sensor (infrastructure metrics)
 
 The Instana PostgreSQL sensor auto-discovers the PostgreSQL process via `/proc` scanning
-and connects to `postgres.banking.svc.cluster.local:5432` using credentials from
+and connects to `postgres.banking-demo.svc.cluster.local:5432` using credentials from
 [`instana/configuration.yaml`](../configuration.yaml):
 
 ```yaml
@@ -471,7 +471,7 @@ auth-service  NATS consumer span
 
 ### Agent sensor (infrastructure metrics)
 
-The Instana Kong sensor polls the Kong Admin API at `kong.banking.svc.cluster.local:8001`
+The Instana Kong sensor polls the Kong Admin API at `kong.banking-demo.svc.cluster.local:8001`
 every 30 s. `KONG_ADMIN_LISTEN` is set to `0.0.0.0:8001` so the agent DaemonSet pod
 can reach it via cluster-DNS (port 8001 is on the Kong ClusterIP Service but **not**
 exposed via hostPort).
@@ -480,7 +480,7 @@ exposed via hostPort).
 com.instana.plugin.kong:
   enabled: true
   remote:
-    - host: 'kong.banking.svc.cluster.local'
+    - host: 'kong.banking-demo.svc.cluster.local'
       port: '8001'
       protocol: 'http'
       poll_rate: 30
@@ -634,7 +634,7 @@ com.instana.plugin.redis:
 com.instana.plugin.kong:
   enabled: true
   remote:
-    - host: 'kong.banking.svc.cluster.local'
+    - host: 'kong.banking-demo.svc.cluster.local'
       port: '8001'
       protocol: 'http'
       poll_rate: 30

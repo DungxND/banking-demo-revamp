@@ -17,7 +17,7 @@ data:
       - job_name: 'auth-service'
         metrics_path: /metrics
         static_configs:
-          - targets: ['auth-service.banking.svc.cluster.local:8001']
+          - targets: ['auth-service.banking-demo.svc.cluster.local:8001']
         relabel_configs:
           - source_labels: [__address__]
             target_label: instance
@@ -26,7 +26,7 @@ data:
       - job_name: 'account-service'
         metrics_path: /metrics
         static_configs:
-          - targets: ['account-service.banking.svc.cluster.local:8002']
+          - targets: ['account-service.banking-demo.svc.cluster.local:8002']
         relabel_configs:
           - source_labels: [__address__]
             target_label: instance
@@ -35,7 +35,7 @@ data:
       - job_name: 'transfer-service'
         metrics_path: /metrics
         static_configs:
-          - targets: ['transfer-service.banking.svc.cluster.local:8003']
+          - targets: ['transfer-service.banking-demo.svc.cluster.local:8003']
         relabel_configs:
           - source_labels: [__address__]
             target_label: instance
@@ -44,7 +44,7 @@ data:
       - job_name: 'notification-service'
         metrics_path: /metrics
         static_configs:
-          - targets: ['notification-service.banking.svc.cluster.local:8004']
+          - targets: ['notification-service.banking-demo.svc.cluster.local:8004']
         relabel_configs:
           - source_labels: [__address__]
             target_label: instance

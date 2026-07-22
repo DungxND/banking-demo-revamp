@@ -12,7 +12,7 @@ agent pod reaches Kong's Admin API directly via cluster-internal DNS — no Node
 
 ```
 DaemonSet agent pod (instana-agent namespace)
-  └─ HTTP poll every 30 s → kong.banking.svc.cluster.local:8001 (Admin API)
+  └─ HTTP poll every 30 s → kong.banking-demo.svc.cluster.local:8001 (Admin API)
 ```
 
 Kong also emits distributed traces via its OTel plugin (push to agent `:4318`):
@@ -31,7 +31,7 @@ Kong (banking namespace)
 `KONG_ADMIN_LISTEN=0.0.0.0:8001` is set in [`helm/values.yaml`](../../helm/values.yaml) so
 Kong binds the admin interface on all interfaces (not just loopback). Port 8001 is exposed
 on the Kong ClusterIP Service in [`helm/templates/kong.yaml`](../../helm/templates/kong.yaml),
-making it reachable from the `instana-agent` namespace via `kong.banking.svc.cluster.local:8001`.
+making it reachable from the `instana-agent` namespace via `kong.banking-demo.svc.cluster.local:8001`.
 
 ### 2. Prometheus plugin enabled
 
@@ -82,7 +82,7 @@ com.instana.plugin.kong:
   dataset_size: 10
   status_code_group: '2xx,3xx,4xx,5xx'
   remote:
-    - host: 'kong.banking.svc.cluster.local'
+    - host: 'kong.banking-demo.svc.cluster.local'
       port: '8001'
       availabilityZone: 'banking-dung-ec2'
       poll_rate: 30        # minimum: 30 s per IBM docs
@@ -139,7 +139,7 @@ kubectl -n instana-agent logs ds/instana-agent --tail=50 | grep -i "kong"
 
 # Verify Admin API is reachable from within the cluster
 kubectl -n instana-agent exec ds/instana-agent -- \
-  sh -c 'curl -sf http://kong.banking.svc.cluster.local:8001/status | head -c 200'
+  sh -c 'curl -sf http://kong.banking-demo.svc.cluster.local:8001/status | head -c 200'
 # Expected: {"database":{"reachability":true ...}
 
 # Verify OTel traces are reaching the agent
@@ -153,7 +153,7 @@ Cause: Agent cannot reach the Admin API.
 Checklist:
 1. `KONG_ADMIN_LISTEN=0.0.0.0:8001` is set in `helm/values.yaml` kong env block
 2. Port 8001 is listed in the Kong ClusterIP Service (`helm/templates/kong.yaml`)
-3. `host: 'kong.banking.svc.cluster.local'` matches the Service name and namespace
+3. `host: 'kong.banking-demo.svc.cluster.local'` matches the Service name and namespace
 
 ```bash
 # Confirm Kong Service exposes port 8001

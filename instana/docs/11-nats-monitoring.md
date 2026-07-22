@@ -206,7 +206,7 @@ no explicit `endpoints:` block is needed. To add one manually as a fallback:
 com.instana.plugin.prometheus:
   prometheusAnnotations: strict
   # endpoints:
-  #   - url: http://nats-exporter.banking.svc.cluster.local:7777/metrics
+  #   - url: http://nats-exporter.banking-demo.svc.cluster.local:7777/metrics
   #     poll_rate: 10
 ```
 

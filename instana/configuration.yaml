@@ -197,7 +197,7 @@ com.instana.plugin.kong:
   dataset_size: 10
   status_code_group: '2xx,3xx,4xx,5xx'
   remote:
-    - host: 'kong.banking.svc.cluster.local'
+    - host: 'kong.banking-demo.svc.cluster.local'
       port: '8001'
       availabilityZone: 'banking-dung-ec2'
       poll_rate: 30
