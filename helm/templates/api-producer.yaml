@@ -40,12 +40,12 @@ spec:
               topologyKey: kubernetes.io/hostname
       initContainers:
         - name: wait-for-nats
-          image: alpine:3.23
+          image: busybox:1.38
           imagePullPolicy: IfNotPresent
           command:
             - 'sh'
             - '-c'
-            - 'until nc -z nats 4222; do echo "waiting for nats"; sleep 2; done'
+            - 'until wget -q -O /dev/null http://{{ include "banking-demo.nats.fullname" . }}:8222/healthz; do echo "waiting for nats"; sleep 2; done'
           resources:
             requests:
               cpu: "5m"
