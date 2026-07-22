@@ -58,6 +58,10 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       nodeSelector:
         {{- toYaml .Values.caddy.nodeSelector | nindent 8 }}
+      {{- with .Values.caddy.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with .Values.caddy.securityContext.pod }}
       securityContext:
         {{- toYaml . | nindent 8 }}

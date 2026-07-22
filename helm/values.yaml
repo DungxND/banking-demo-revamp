@@ -43,6 +43,13 @@ caddy:
   hostNetwork: true
   nodeSelector:
     node-role.kubernetes.io/control-plane: ""
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"
+    - key: "node-role.kubernetes.io/master"
+      operator: "Exists"
+      effect: "NoSchedule"
   tls:
     enabled: false                 # true = HTTPS via Let's Encrypt (HTTP-01 challenge, no API key needed)
     domain: ""                     # e.g. "bank.duckdns.org" (any domain with A record → node IP)
@@ -449,7 +456,7 @@ frontend:
 
 auth-service:
   enabled: true
-  replicas: 1
+  replicas: 2
   image:
     repository: ghcr.io/dungxnd/banking-demo-revamp/auth-service
     tag: latest
@@ -491,7 +498,7 @@ auth-service:
 
 account-service:
   enabled: true
-  replicas: 3
+  replicas: 2
   image:
     repository: ghcr.io/dungxnd/banking-demo-revamp/account-service
     tag: latest
@@ -533,7 +540,7 @@ account-service:
 
 transfer-service:
   enabled: true
-  replicas: 1
+  replicas: 2
   image:
     repository: ghcr.io/dungxnd/banking-demo-revamp/transfer-service
     tag: latest
@@ -575,7 +582,7 @@ transfer-service:
 
 notification-service:
   enabled: true
-  replicas: 3
+  replicas: 2
   image:
     repository: ghcr.io/dungxnd/banking-demo-revamp/notification-service
     tag: latest
@@ -618,7 +625,7 @@ notification-service:
 # api-producer: stateless HTTP→NATS proxy, no DB/Redis
 api-producer:
   enabled: true
-  replicas: 1
+  replicas: 2
   image:
     repository: ghcr.io/dungxnd/banking-demo-revamp/api-producer
     tag: latest
